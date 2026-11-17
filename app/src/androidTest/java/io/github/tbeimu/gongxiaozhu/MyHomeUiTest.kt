@@ -36,7 +36,7 @@ class MyHomeUiTest {
         schedule = ScheduleUiState(loading = false,
             data = ScheduleData(identity = ScheduleIdentity("fictional-student-2026", name))))
 
-    @Test fun profileShowsNameAndPlainGreetingWithSixCleanEntries() {
+    @Test fun profileShowsNameAndPlainGreetingWithSevenCleanEntries() {
         val opened = mutableListOf<MyDestination>()
         compose.setContent { MyPreviewTheme { AppBackdrop(WallpaperState()) {
             MyHomeScreen(bound(), Modifier.fillMaxSize(), nowProvider = { LocalDateTime.of(1970, 1, 1, 13, 0) }, onOpen = opened::add)
@@ -52,6 +52,8 @@ class MyHomeUiTest {
         compose.onNodeWithText("导入整个学期，离线查看").assertDoesNotExist()
         compose.onNodeWithText("检查更新").assertExists()
         compose.onNodeWithText("应用更新").assertDoesNotExist()
+        assertTrue(compose.onNodeWithTag("my_SHUTTLE").fetchSemanticsNode().boundsInRoot.bottom <=
+            compose.onNodeWithTag("my_SCHEDULE").fetchSemanticsNode().boundsInRoot.top)
         if (InstrumentationRegistry.getArguments().getString("gxzSavePreview") == "true") {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             context.getExternalFilesDir(null)?.resolve("my-home-preview.png")?.outputStream()?.use {

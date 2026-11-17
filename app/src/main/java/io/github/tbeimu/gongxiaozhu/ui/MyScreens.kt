@@ -42,6 +42,7 @@ import java.text.DateFormat
 import java.util.Date
 
 internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
+    SHUTTLE("校车时刻表", AppGlyph.BUS),
     SCHEDULE("课表管理", AppGlyph.CALENDAR), ACCOUNTS("校园网账号", AppGlyph.PERSON),
     NETWORK("校园网连接", AppGlyph.WIFI), APPEARANCE("外观设置", AppGlyph.IMAGE),
     UPDATES("检查更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
@@ -63,8 +64,10 @@ internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates
             Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
                 style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
         }
-        MyGroup(MyDestination.entries.take(3), checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
-        MyGroup(MyDestination.entries.drop(3), checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 5)
+        MyGroup(listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.ACCOUNTS, MyDestination.NETWORK),
+            checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
+        MyGroup(listOf(MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT),
+            checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 6)
     }
 }
 
@@ -122,6 +125,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             when (page) {
+                MyDestination.SHUTTLE -> ShuttleTimetableContent()
                 MyDestination.SCHEDULE -> {
                     val schedule = state.schedule
                     var cancelImportConfirmation by remember { mutableStateOf(false) }

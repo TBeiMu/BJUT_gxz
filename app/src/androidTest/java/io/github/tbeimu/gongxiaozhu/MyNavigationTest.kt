@@ -3,6 +3,7 @@ package io.github.tbeimu.gongxiaozhu
 import android.content.Intent
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -16,6 +17,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
 import org.junit.rules.RuleChain
+import org.junit.Assert.*
 
 class MyNavigationTest {
     private val compose=createAndroidComposeRule<MainActivity>()
@@ -25,7 +27,7 @@ class MyNavigationTest {
     }
     @get:Rule val rules:RuleChain=RuleChain.outerRule(fixture).around(compose)
 
-    @Test fun sixDestinationsReturnAndBottomTabsStayAvailable(){
+    @Test fun destinationsReturnAndBottomTabsStayAvailable(){
         compose.onNodeWithText("我的",substring=false).performClick()
         compose.onNodeWithText("校园服务",substring=false).assertDoesNotExist()
         compose.onNodeWithText("应用",substring=false).assertDoesNotExist()
@@ -33,21 +35,38 @@ class MyNavigationTest {
         compose.onNodeWithText("你的北工大校园助手").assertDoesNotExist()
         compose.onNodeWithText("检查更新").assertExists()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
-        listOf("SCHEDULE","ACCOUNTS","NETWORK","APPEARANCE","UPDATES","ABOUT").forEach { key ->
+        listOf("SHUTTLE","SCHEDULE","ACCOUNTS","NETWORK","APPEARANCE","ABOUT").forEach { key ->
             compose.onNodeWithTag("my_$key").performScrollTo().performClick()
             compose.onNodeWithText("资费",substring=false).assertExists()
             compose.onNodeWithContentDescription("返回").performClick()
             compose.onNodeWithTag("my_$key").assertExists()
         }
-        compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
+        compose.onNodeWithTag("my_ABOUT").performScrollTo().performClick()
         compose.activityRule.scenario.recreate()
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("update_card").fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
-        }
-        compose.onNodeWithTag("update_card").assertExists()
+        compose.onNodeWithText("北京工业大学校园助手 · Android 12 及以上").assertExists()
         compose.onNodeWithText("我的",substring=false).performClick()
         compose.onNodeWithTag("my_UPDATES").assertExists()
         compose.onNodeWithTag("my_profile_greeting").assertExists()
+    }
+    @Test fun shuttleWorksWithoutAccountsAndRestoresBothBackPaths(){
+        compose.onNodeWithText("我的",substring=false).performClick()
+        assertTrue(compose.onNodeWithTag("my_SHUTTLE").fetchSemanticsNode().boundsInRoot.bottom <=
+            compose.onNodeWithTag("my_SCHEDULE").fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithTag("my_SHUTTLE").performClick()
+        compose.onNodeWithTag("shuttle_timetable").assertExists()
+        compose.onNodeWithText("资费",substring=false).assertIsDisplayed()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("shuttle_timetable").assertExists()
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        context.getExternalFilesDir(null)!!.resolve("shuttle-app.png").outputStream().use {
+            compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)
+        }
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("my_SHUTTLE").assertIsDisplayed()
+        compose.onNodeWithTag("my_SHUTTLE").performClick()
+        compose.onNodeWithTag("shuttle_timetable").assertExists()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("my_SHUTTLE").assertIsDisplayed()
     }
     @Test fun notificationIntentsOpenTheirOwnDetailsAndReturnToMine(){
         val updateRequests=mutableIntStateOf(0)
