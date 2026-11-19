@@ -1,5 +1,6 @@
 package io.github.tbeimu.gongxiaozhu
 
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +11,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -93,6 +95,59 @@ class MyHomeUiTest {
         }
         assertEquals(MyDestination.entries, opened)
     }
+
+    private fun verifyGithubFooter(fontScale: Float, dark: Boolean, height: Int) {
+        var projectClicks = 0
+        compose.setContent {
+          val configuration = Configuration(LocalConfiguration.current).apply {
+              uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                  if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+          }
+          CompositionLocalProvider(LocalConfiguration provides configuration) { GongXiaoZhuTheme { AppBackdrop(WallpaperState()) {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                MyHomeScreen(bound(), Modifier.fillMaxWidth().height(height.dp),
+                    onOpenProject = { projectClicks++ }, onOpen = {})
+            }
+          } } }
+        }
+        compose.waitForIdle()
+        val footer = compose.onNodeWithTag("my_github").assertIsDisplayed().assertHasClickAction()
+        val original = footer.fetchSemanticsNode().boundsInRoot
+        val home = compose.onNodeWithTag("my_home").fetchSemanticsNode().boundsInRoot
+        assertEquals(home.center.x, original.center.x, 1f)
+        assertTrue(original.height >= with(compose.density) { 48.dp.toPx() })
+        compose.onNodeWithTag("my_github_label", useUnmergedTree = true).assertTextEquals("github")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
+                val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                assertTrue(get(layouts))
+                val layout = layouts.single()
+                // A wrapped label may reuse a paragraph wider than its actual text; check the rendered line bounds.
+                assertEquals(1, layout.lineCount)
+                assertFalse(layout.didOverflowHeight)
+                assertTrue(layout.getLineLeft(0) >= 0f)
+                assertTrue(layout.getLineRight(0) <= layout.size.width)
+            }
+        MyDestination.entries.forEach { destination ->
+            val row = compose.onNodeWithTag("my_${destination.name}").performScrollTo().assertIsDisplayed()
+            assertTrue(row.fetchSemanticsNode().boundsInRoot.bottom <= original.top)
+            assertEquals(original, footer.fetchSemanticsNode().boundsInRoot)
+        }
+        compose.onNodeWithTag("my_github_icon", useUnmergedTree = true).performTouchInput { click() }
+        compose.onNodeWithTag("my_github_label", useUnmergedTree = true).performTouchInput { click() }
+        assertEquals(2, projectClicks)
+        compose.onNodeWithContentDescription("打开 GitHub 项目主页").assertIsDisplayed()
+        if (InstrumentationRegistry.getArguments().getString("gxzSavePreview") == "true") {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            context.getExternalFilesDir(null)?.resolve("my-github-$dark-$height.png")?.outputStream()?.use {
+                compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+        }
+    }
+
+    @Test fun githubFooterStaysFixedAndCenteredWhileContentScrolls() = verifyGithubFooter(1f, false, 650)
+    @Test fun githubFooterSupportsLargeFontsInSmallLightWindow() = verifyGithubFooter(2f, false, 420)
+    @Test fun githubFooterSupportsLargeFontsInShortDarkWindow() = verifyGithubFooter(2f, true, 320)
 
     @Test fun profileUsesDefaultRemarkAndFallsBackToTheFullAccount() {
         val account = AccountSummary("fictional-primary", "自定义备注", "2026000123")

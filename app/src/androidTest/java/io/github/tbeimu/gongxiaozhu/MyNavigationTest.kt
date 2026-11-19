@@ -1,8 +1,12 @@
 package io.github.tbeimu.gongxiaozhu
 
 import android.content.Intent
+import android.content.ContextWrapper
+import android.content.ActivityNotFoundException
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -13,6 +17,7 @@ import io.github.tbeimu.gongxiaozhu.update.UpdateDownloadService
 import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuApp
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -26,6 +31,60 @@ class MyNavigationTest {
         override fun after(){createAccountRepository(InstrumentationRegistry.getInstrumentation().targetContext).reset()}
     }
     @get:Rule val rules:RuleChain=RuleChain.outerRule(fixture).around(compose)
+
+    private fun interceptProjectLaunch(onLaunch: (Intent) -> Unit) {
+        compose.runOnUiThread {
+            val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
+            val context = object : ContextWrapper(compose.activity) {
+                override fun startActivity(intent: Intent) = onLaunch(intent)
+            }
+            compose.activity.setContent {
+                CompositionLocalProvider(LocalContext provides context) { GongXiaoZhuApp(model) }
+            }
+        }
+        compose.onNodeWithText("我的", substring = false).performClick()
+    }
+
+    @Test fun githubOpensProjectHomepageOnceAndKeepsMineOnReturn() {
+        val launches = mutableListOf<Intent>()
+        interceptProjectLaunch(launches::add)
+        compose.onNodeWithTag("my_github").performClick()
+        compose.runOnIdle {
+            assertEquals(1, launches.size)
+            assertEquals(Intent.ACTION_VIEW, launches.single().action)
+            assertEquals("https://github.com/TBeiMu/BJUT_gxz", launches.single().dataString)
+        }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onNodeWithTag("my_github").assertIsDisplayed()
+        compose.onNodeWithTag("my_ABOUT").performScrollTo().performClick()
+        compose.onNodeWithTag("my_github").assertDoesNotExist()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("my_github").assertIsDisplayed()
+        val footer = compose.onNodeWithTag("my_github").fetchSemanticsNode().boundsInRoot
+        val dock = compose.onNodeWithText("我的", substring = false).fetchSemanticsNode().boundsInRoot
+        assertTrue(footer.bottom <= dock.top)
+        if (InstrumentationRegistry.getArguments().getString("gxzSavePreview") == "true") {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            context.getExternalFilesDir(null)!!.resolve("my-github-app.png").outputStream().use {
+                compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+        }
+    }
+
+    @Test fun githubWithoutBrowserShowsFeedbackAndKeepsPage() {
+        interceptProjectLaunch { throw ActivityNotFoundException() }
+        compose.onNodeWithTag("my_github").performClick()
+        compose.onNodeWithText("暂时无法打开 GitHub 项目主页").assertIsDisplayed()
+        compose.onNodeWithTag("my_github").assertIsDisplayed()
+    }
+
+    @Test fun githubRejectedBySystemShowsFeedbackAndKeepsPage() {
+        interceptProjectLaunch { throw SecurityException() }
+        compose.onNodeWithTag("my_github").performClick()
+        compose.onNodeWithText("暂时无法打开 GitHub 项目主页").assertIsDisplayed()
+        compose.onNodeWithTag("my_github").assertIsDisplayed()
+    }
 
     @Test fun destinationsReturnAndBottomTabsStayAvailable(){
         compose.onNodeWithText("我的",substring=false).performClick()

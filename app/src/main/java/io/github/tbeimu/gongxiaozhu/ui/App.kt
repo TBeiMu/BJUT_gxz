@@ -1,5 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -55,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -65,6 +68,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -80,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -88,6 +93,9 @@ import io.github.tbeimu.gongxiaozhu.data.AccountSummary
 import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
+
+internal const val PROJECT_HOME_URL = "https://github.com/TBeiMu/BJUT_gxz"
 
 internal enum class Tab(val title: String) {
     SCHEDULE("课表"), BILLING("资费"), MY("我的")
@@ -103,6 +111,16 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var localDialogVisible by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Tab.SCHEDULE) }
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    fun openProjectHome() {
+        val opened = try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, PROJECT_HOME_URL.toUri()))
+            true
+        } catch (_: ActivityNotFoundException) { false }
+          catch (_: SecurityException) { false }
+        if (!opened) scope.launch { snackbar.showSnackbar("暂时无法打开 GitHub 项目主页") }
+    }
     val wallpaper = rememberWallpaper()
     var destination by rememberSaveable { mutableStateOf<MyDestination?>(null) }
     var returnTab by rememberSaveable { mutableStateOf(Tab.MY) }
@@ -177,7 +195,8 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                     onAccounts = { open(MyDestination.ACCOUNTS, Tab.BILLING) },
                     onQuery = model::queryBilling, onOffline = model::requestOffline,
                     onDialogVisibilityChanged = { localDialogVisible = it })
-                Tab.MY -> MyHomeScreen(state, Modifier.padding(padding), updates.phase == UpdatePhase.CHECKING) {
+                Tab.MY -> MyHomeScreen(state, Modifier.padding(padding), updates.phase == UpdatePhase.CHECKING,
+                    onOpenProject = ::openProjectHome) {
                     if (it == MyDestination.UPDATES && updates.enabled &&
                         updates.phase !in setOf(UpdatePhase.DOWNLOADING, UpdatePhase.PAUSED, UpdatePhase.VERIFYING, UpdatePhase.READY) &&
                         !updates.downloadStarting) {

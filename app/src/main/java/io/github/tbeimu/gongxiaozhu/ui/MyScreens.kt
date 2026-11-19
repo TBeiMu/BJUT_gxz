@@ -50,24 +50,36 @@ internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
 
 @Composable
 internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates: Boolean = false,
-    nowProvider: () -> java.time.LocalDateTime = ::myGreetingNow, onOpen: (MyDestination) -> Unit) {
+    nowProvider: () -> java.time.LocalDateTime = ::myGreetingNow, onOpenProject: () -> Unit = {},
+    onOpen: (MyDestination) -> Unit) {
     val palette = gxz
     val scroll = rememberScrollState()
     val moment by rememberMyGreetingMoment(nowProvider)
-    Column(modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Account remark above a quiet greeting, without an avatar or subtitle badge.
-        Column(Modifier.fillMaxWidth().parallaxHeader(scroll).padding(start = 8.dp, end = 8.dp, top = 36.dp, bottom = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(myProfileTitle(state), Modifier.entrance(0, distance = 10.dp).testTag("my_profile_title"),
-                style = MaterialTheme.typography.displaySmall, color = palette.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
-                style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+    Column(modifier.fillMaxSize().testTag("my_home")) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll)
+            .padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            // Account remark above a quiet greeting, without an avatar or subtitle badge.
+            Column(Modifier.fillMaxWidth().parallaxHeader(scroll).padding(start = 8.dp, end = 8.dp, top = 36.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(myProfileTitle(state), Modifier.entrance(0, distance = 10.dp).testTag("my_profile_title"),
+                    style = MaterialTheme.typography.displaySmall, color = palette.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
+                    style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+            }
+            MyGroup(listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.ACCOUNTS, MyDestination.NETWORK),
+                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
+            MyGroup(listOf(MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT),
+                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 6)
         }
-        MyGroup(listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.ACCOUNTS, MyDestination.NETWORK),
-            checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
-        MyGroup(listOf(MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT),
-            checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 6)
+        Row(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onOpenProject)
+            .semantics(mergeDescendants = true) { contentDescription = "打开 GitHub 项目主页" }
+            .testTag("my_github").padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_github), contentDescription = null,
+                modifier = Modifier.size(20.dp).testTag("my_github_icon"), tint = palette.inkSoft)
+            Text("github", Modifier.testTag("my_github_label"), style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+        }
     }
 }
 
