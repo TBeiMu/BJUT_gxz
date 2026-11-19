@@ -38,8 +38,8 @@ class UpdateDownloadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == CANCEL) {
-            repository.cancel()
-            if (!observing) stopSelf()
+            repository.cancelDownload(intent.getStringExtra(DOWNLOAD_PERMIT))
+            if (!observing) stopSelfResult(startId)
             return START_NOT_STICKY
         }
         ServiceCompat.startForeground(this, PROGRESS_ID, notification(repository.state.value),
@@ -48,7 +48,7 @@ class UpdateDownloadService : Service() {
         if (repository.download(permit)) {
             ownedPermit = permit
         } else if (!observing) {
-            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId); return START_NOT_STICKY
         }
         if (!observing) {
             observing = true
@@ -82,9 +82,14 @@ class UpdateDownloadService : Service() {
             val size = state.manifest?.apkSize ?: 0
             val percent = if (size > 0) (100 * state.bytes / size).toInt().coerceIn(0, 100) else 0
             builder.setProgress(100, percent, state.phase != UpdatePhase.DOWNLOADING)
-            val cancel = PendingIntent.getService(this, 1, Intent(this, UpdateDownloadService::class.java).setAction(CANCEL),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            builder.addAction(0, "取消下载", cancel)
+            ownedPermit?.let { permit ->
+                val intent = Intent(this, UpdateDownloadService::class.java).setAction(CANCEL)
+                    .setData(android.net.Uri.Builder().scheme("gxz-update").authority("download").appendPath(permit).build())
+                    .putExtra(DOWNLOAD_PERMIT, permit)
+                val cancel = PendingIntent.getService(this, 1, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                builder.addAction(0, "取消下载", cancel)
+            }
         }
         return builder.build()
     }

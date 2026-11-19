@@ -420,6 +420,14 @@ class UpdateRepository(private val scope: CoroutineScope, private val store: Upd
         if (permit != null && activeDownloadPermit == permit && task?.isCancelled == false) pause(message)
     }
 
+    /** A queued notification action cannot clear a different active or approved download attempt. */
+    internal fun cancelDownload(permit: String?): Boolean {
+        if (permit == null || (activeDownloadPermit != permit &&
+                authorization?.let { it.id == permit && it.approved } != true)) return false
+        cancel()
+        return true
+    }
+
     fun cancel() {
         if (clearing) return
         automaticPending = false
