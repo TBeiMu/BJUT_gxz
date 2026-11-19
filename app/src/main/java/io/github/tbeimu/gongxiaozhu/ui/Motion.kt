@@ -1,5 +1,8 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -35,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -52,6 +56,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -91,11 +96,26 @@ internal val LocalReducedMotion = staticCompositionLocalOf { false }
 
 @Composable
 internal fun rememberReducedMotion(): Boolean {
-    val context = LocalContext.current
-    return remember(context) {
-        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val resolver = LocalContext.current.contentResolver
+    fun read() = runCatching { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
             .getOrDefault(false)
+    var reduced by remember(resolver) { mutableStateOf(read()) }
+    LifecycleStartEffect(resolver) {
+        var active = true
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { if (active) reduced = read() }
+        }
+        val registered = runCatching {
+            resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        }.isSuccess
+        // Register first so a setting changed during the foreground snapshot cannot be missed.
+        reduced = read()
+        onStopOrDispose {
+            active = false
+            if (registered) resolver.unregisterContentObserver(observer)
+        }
     }
+    return reduced
 }
 
 /** Shrinks slightly while pressed and springs back on release. */
