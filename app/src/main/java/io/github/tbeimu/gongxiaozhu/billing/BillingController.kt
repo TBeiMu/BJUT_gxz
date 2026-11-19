@@ -234,7 +234,14 @@ class BillingController(
         job = scope.launch {
             try {
                 awaitLoginStopped()
-                current.offline(confirmation.device)
+                try { current.offline(confirmation.device) }
+                catch (error: BillingException) {
+                    // The server may already have acted before its response was lost or malformed.
+                    // A failure while waiting for authentication cleanup above is still distinct.
+                    if (error.problem == BillingProblem.CONNECTION || error.problem == BillingProblem.RESPONSE)
+                        throw BillingException(BillingProblem.OFFLINE)
+                    throw error
+                }
                 if (token != generation) return@launch
                 offlineConfirmed = true
                 // A successful offline response is conclusive even if the current WiFi then disconnects.

@@ -230,6 +230,44 @@ class BillingControllerTest {
         assertEquals(1, fake.offlineCalls); assertTrue(states.last().message.contains("未确认")); assertFalse(states.last().running)
     }
 
+    @Test fun lostOrMalformedOfflineResponseKeepsOutcomeUnconfirmedWithoutRetrying() = runTest {
+        for (problem in listOf(BillingProblem.CONNECTION, BillingProblem.RESPONSE)) {
+            val fake = FakeSession().apply { onOffline = { throw BillingException(problem) } }
+            var state = BillingUiState()
+            val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+            controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+            controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+            assertEquals(BillingProblem.OFFLINE.hint, state.message)
+            assertEquals(demoSnapshot, state.snapshot)
+            assertNull(state.confirmation); assertFalse(state.running)
+            assertEquals(1, fake.offlineCalls); assertEquals(1, fake.calls)
+            controller.confirmOffline(); runCurrent()
+            assertEquals(1, fake.offlineCalls)
+        }
+    }
+
+    @Test fun expiredOfflineSessionKeepsItsExplicitFailureWithoutRetrying() = runTest {
+        val fake = FakeSession().apply { onOffline = { throw BillingException(BillingProblem.EXPIRED) } }
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+        assertEquals(BillingProblem.EXPIRED.hint, state.message)
+        assertEquals(1, fake.offlineCalls); assertEquals(1, fake.calls)
+        assertEquals(demoSnapshot, state.snapshot)
+    }
+
+    @Test fun authenticationCleanupFailureDoesNotClaimAnOfflineRequestWasSent() = runTest {
+        val fake = FakeSession()
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {},
+            awaitLoginStopped = { throw BillingException(BillingProblem.CONNECTION) })
+        controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
+        assertEquals(BillingProblem.CONNECTION.hint, state.message)
+        assertEquals(0, fake.offlineCalls); assertEquals(1, fake.calls)
+    }
+
     @Test fun rejectedLoginOffersWebOnceAndCancelDoesNotResubmit() = runTest {
         val fake = FakeSession().apply { onRefresh = { throw BillingException(BillingProblem.UNCONFIRMED) } }
         val states = mutableListOf<BillingUiState>()
