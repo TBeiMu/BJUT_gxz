@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import androidx.compose.runtime.saveable.mapSaver
+import io.github.tbeimu.gongxiaozhu.schedule.CourseEditContext
 import io.github.tbeimu.gongxiaozhu.schedule.CourseOriginalArrangement
 import io.github.tbeimu.gongxiaozhu.schedule.bjutLessonTime
 
@@ -12,8 +13,11 @@ internal data class CourseLessonSelection(
 ) {
     fun select(lesson: Int): CourseLessonSelection {
         require(lesson in 1..12)
-        return if (anchor == null) CourseLessonSelection(listOf(lesson), lesson, true)
-        else CourseLessonSelection((minOf(anchor, lesson)..maxOf(anchor, lesson)).toList(), changed = true)
+        return when {
+            anchor != null -> CourseLessonSelection((minOf(anchor, lesson)..maxOf(anchor, lesson)).toList(), changed = true)
+            lesson in lessons -> CourseLessonSelection(lessons - lesson, changed = true)
+            else -> CourseLessonSelection(listOf(lesson), lesson, true)
+        }
     }
 
     companion object {
@@ -29,7 +33,7 @@ internal data class CourseLessonSelection(
     }
 }
 
-/** Keep the original range visible while using one resulting-week selection. */
+/** The resulting weeks initially match every occurrence in the edited weekday/lesson series. */
 internal data class CourseWeekSelection(
     val sourceWeeks: List<Int>,
     val targetWeeks: List<Int>,
@@ -41,6 +45,16 @@ internal data class CourseWeekSelection(
         if (weekCount in 1..60) copy(targetWeeks = targetWeeks.filter { it in 1..weekCount || it in preservedWeeks }) else this
 
     companion object {
+        fun initial(context: CourseEditContext): CourseWeekSelection {
+            val clicked = listOf(context.defaultWeek)
+            val sources = when {
+                context.course == null -> emptyList()
+                context.deleteOnly -> clicked
+                else -> context.availableWeeks.ifEmpty { clicked }.distinct().sorted()
+            }
+            return CourseWeekSelection(sources, if (context.course == null) clicked else sources)
+        }
+
         val Saver = mapSaver(
             save = { value: CourseWeekSelection -> mapOf(
                 "sources" to ArrayList(value.sourceWeeks), "targets" to ArrayList(value.targetWeeks),
@@ -50,6 +64,20 @@ internal data class CourseWeekSelection(
                 (value["targets"] as List<*>).filterIsInstance<Int>(),
             ) },
         )
+    }
+}
+
+/** Dragging only adds a range; selected options are removed by explicit taps. */
+internal class CourseDragSelection(selected: List<Int>, private val available: List<Int>, private val anchor: Int) {
+    private val original = selected.filter { it in available }.toSet()
+    private val selecting = anchor !in original
+
+    init { require(anchor in available) }
+
+    fun through(value: Int): List<Int> {
+        require(value in available)
+        val range = available.filter { it in minOf(anchor, value)..maxOf(anchor, value) }.toSet()
+        return (if (selecting) original + range else original).sorted()
     }
 }
 
@@ -90,7 +118,7 @@ internal fun courseWeekSummary(weeks: List<Int>): String {
 }
 
 internal fun courseLessonSummary(lessons: List<Int>): String =
-    "第 " + numberRanges(lessons).joinToString("、") + " 节"
+    if (lessons.isEmpty()) "未选择节次" else "第 " + numberRanges(lessons).joinToString("、") + " 节"
 
 internal fun courseOriginalScheduleSummary(arrangements: List<CourseOriginalArrangement>): String {
     val grouped = arrangements.groupBy { it.weekday to it.lessons.distinct().sorted() }

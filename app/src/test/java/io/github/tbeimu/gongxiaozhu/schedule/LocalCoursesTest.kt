@@ -99,6 +99,60 @@ class LocalCoursesTest {
         assertEquals(listOf(CourseOriginalArrangement(1, 1, listOf(1, 2)),
             CourseOriginalArrangement(2, 1, listOf(5, 6))), context.originalArrangements)
     }
+    @Test fun editingFullSchoolWeekRangeRemovesDeselectedWeeksAndLessonsButRetainsOtherPatterns() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm.copy(weekCount = 20))
+        (1..20).forEach { number ->
+            val week = demoWeek(number)
+            val original = week.courses.single().copy(lessons = (9..12).toList())
+            repo.append(week.copy(courses = if (number in 10..17) listOf(original,
+                original.copy(date = week.dates[2]), original.copy(lessons = listOf(5, 6))) else emptyList()))
+        }
+        val before = repo.finish(1)
+        val source = before.complete!!.weeks[12].courses.first()
+        val context = before.courseEditor(source)
+        assertEquals((10..17).toList(), context.availableWeeks)
+        val result = repo.edit(context, draft(context, source.name, source = context.availableWeeks,
+            target = (11..16).toList(), day = 1, lessons = listOf(9, 10)))
+        result.complete!!.weeks.forEach { week ->
+            assertEquals(if (week.number in 11..16) 1 else 0, week.courses.count { it.date == week.dates[0] && it.lessons == listOf(9, 10) })
+            assertFalse(week.courses.any { it.date == week.dates[0] && it.lessons == (9..12).toList() })
+            assertEquals(before.complete.weeks[week.number - 1].courses.filter { it.date != week.dates[0] || it.lessons == listOf(5, 6) },
+                week.courses.filter { it.date != week.dates[0] || it.lessons == listOf(5, 6) })
+        }
+    }
+    @Test fun editingFullCustomWeekRangePreservesOtherDaysAndIntervalsAfterEncryptedReload() {
+        val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+        val adding = repo.snapshot().courseEditor()
+        repo.edit(adding, draft(adding, target = (10..17).toList(), day = 1, lessons = (9..12).toList())
+            .copy(weekdays = listOf(1, 3)))
+        val initial = repo.snapshot()
+        val source = initial.display()!!.weeks[12].courses.first()
+        val context = initial.courseEditor(source)
+        val result = repo.edit(context, draft(context, source.name, source = context.availableWeeks,
+            target = (11..16).toList(), day = 1, lessons = listOf(9, 10)))
+        val course = result.localTerms.single().courses.single()
+        assertEquals(source.id, course.id)
+        assertEquals((11..16).map { CustomOccurrence(it, 1, listOf(9, 10)) }, course.occurrences.filter { it.weekday == 1 })
+        assertEquals((10..17).map { CustomOccurrence(it, 3, (9..12).toList()) }, course.occurrences.filter { it.weekday == 3 })
+        assertEquals(result, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+    }
+    @Test fun lateLessonsCanKeepOrShrinkOriginalWeekSeriesButCannotExpandToANewWeek() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm.copy(weekCount = 3))
+        (1..3).forEach { number ->
+            val week = demoWeek(number)
+            repo.append(week.copy(courses = if (number <= 2) week.courses.map { it.copy(lessons = listOf(13, 14)) } else emptyList()))
+        }
+        val before = repo.finish(1)
+        val source = before.complete!!.weeks[0].courses.single()
+        val context = before.courseEditor(source)
+        val unchanged = draft(context, source.name, source = context.availableWeeks, target = context.availableWeeks, day = 1, lessons = source.lessons)
+        assertThrows(CourseValidationException::class.java) { repo.edit(context, unchanged.copy(targetWeeks = listOf(1, 2, 3))) }
+        val kept = repo.edit(context, unchanged)
+        val edit = kept.courseEditor(kept.complete!!.weeks[0].courses.single())
+        val result = repo.edit(edit, unchanged.copy(targetWeeks = listOf(2)))
+        assertTrue(result.complete!!.weeks[0].courses.isEmpty())
+        assertEquals(listOf(13, 14), result.complete.weeks[1].courses.single().lessons)
+    }
     @Test fun editingAnImportedLessonAboveTwelveCanPreserveItButCannotSelectItAnew() {
         val repo = repository(); repo.begin(demoIdentity, demoTerm)
         val original = demoWeek(1).courses.single().copy(lessons = listOf(13, 14))

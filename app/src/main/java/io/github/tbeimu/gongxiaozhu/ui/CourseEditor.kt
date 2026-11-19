@@ -3,6 +3,8 @@ package io.github.tbeimu.gongxiaozhu.ui
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -19,6 +21,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -48,7 +55,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var nameTouched by rememberSaveable(context.token) { mutableStateOf(false) }
     var weekdays by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeekday)) }
     var selectedWeeks by rememberSaveable(context.token, stateSaver = CourseWeekSelection.Saver) {
-        mutableStateOf(CourseWeekSelection(listOf(context.defaultWeek), listOf(context.defaultWeek)))
+        mutableStateOf(CourseWeekSelection.initial(context))
     }
     var selectedLessons by rememberSaveable(context.token, stateSaver = CourseLessonSelection.Saver) {
         mutableStateOf(CourseLessonSelection(course?.lessons ?: listOf(1, 2)))
@@ -65,7 +72,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         selectedWeeks.targetWeeks.isNotEmpty() && selectedWeeks.targetWeeks.all {
             it in 1..weeks || it in originalWeeks
         } &&
-        (!preservesLateLessons || (selectedWeeks.targetWeeks == listOf(context.defaultWeek) &&
+        (!preservesLateLessons || (selectedWeeks.targetWeeks.all { it in selectedWeeks.sourceWeeks } &&
             weekdays == listOf(context.defaultWeekday))) &&
         selectedLessons.lessons.isNotEmpty() &&
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
@@ -141,7 +148,12 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
             }
             if (weekdays.isEmpty()) EditorError("请至少选择一个星期")
         }
-        EditorSection("节次", courseLessonSummary(selectedLessons.lessons)) {
+        EditorSection("节次") {
+            EditorSelectionGrid((1..12).toList(), selectedLessons.lessons, !saving, "course_lesson", { "第 $it 节" },
+                onClick = { focus.clearFocus(); selectedLessons = selectedLessons.select(it) },
+                onDragSelection = { focus.clearFocus(); selectedLessons = CourseLessonSelection(it, changed = true) })
+            Text(courseLessonSummary(selectedLessons.lessons), Modifier.testTag("course_lesson_summary"),
+                style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
             courseLessonClock(selectedLessons.lessons)?.let {
                 Text(it, Modifier.testTag("course_lesson_clock"), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
             }
@@ -149,12 +161,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
                 Text("已选第 $anchor 节，再点结束节次", Modifier.testTag("course_lesson_hint"),
                     style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
             }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..12).forEach { lesson ->
-                    EditorChoice("$lesson", lesson in selectedLessons.lessons, !saving, "course_lesson_$lesson",
-                        description = "第 $lesson 节") { focus.clearFocus(); selectedLessons = selectedLessons.select(lesson) }
-                }
-            }
+            if (selectedLessons.lessons.isEmpty()) EditorError("请至少选择一个节次")
         }
         if (course != null) {
             val original = context.originalArrangements.ifEmpty {
@@ -268,10 +275,10 @@ private fun EditorSection(title: String, detail: String? = null, content: @Compo
 
 @Composable
 private fun EditorChoice(label: String, selected: Boolean, enabled: Boolean, tag: String,
-    role: Role = Role.Checkbox, description: String? = null, onClick: () -> Unit) {
+    modifier: Modifier = Modifier, role: Role = Role.Checkbox, description: String? = null, onClick: () -> Unit) {
     val targetColor = if (selected) gxz.ink else gxz.well
     val animatedColor by animateColorAsState(targetColor, tween(if (LocalReducedMotion.current) 0 else Motion.SHORT), label = "课程选项")
-    Box(Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp).testTag(tag).clip(EditorOptionShape)
+    Box(modifier.widthIn(min = 48.dp).heightIn(min = 48.dp).testTag(tag).clip(EditorOptionShape)
         .background(animatedColor.copy(alpha = if (enabled) animatedColor.alpha else animatedColor.alpha * .45f))
         .selectable(selected, enabled = enabled, role = role, onClick = onClick)
         .semantics {
@@ -284,11 +291,52 @@ private fun EditorChoice(label: String, selected: Boolean, enabled: Boolean, tag
     }
 }
 
+/** Only unselected options start an adding drag; selected options and gaps allow scrolling. */
+@Composable
+private fun EditorSelectionGrid(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String,
+    description: (Int) -> String, onClick: (Int) -> Unit, onDragSelection: (List<Int>) -> Unit) {
+    val bounds = remember(available) { mutableMapOf<Int, Rect>() }
+    val currentSelected by rememberUpdatedState(selected)
+    val currentOnDragSelection by rememberUpdatedState(onDragSelection)
+    FlowRow(Modifier.fillMaxWidth().testTag(tag + "_grid").pointerInput(available, enabled) {
+        if (!enabled) return@pointerInput
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val start = bounds.entries.firstOrNull { it.value.contains(down.position) }?.key ?: return@awaitEachGesture
+            if (start in currentSelected) return@awaitEachGesture
+            val selection = CourseDragSelection(currentSelected, available, start)
+            var dragging = false
+            var previous: Int? = null
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (!change.pressed) {
+                    if (dragging) change.consume()
+                    break
+                }
+                if (change.isConsumed || event.changes.count { it.pressed } != 1) break
+                if (!dragging && (change.position - down.position).getDistance() <= viewConfiguration.touchSlop) continue
+                dragging = true
+                change.consume()
+                val value = bounds.entries.firstOrNull { it.value.contains(change.position) }?.key ?: previous ?: start
+                if (value != previous) {
+                    currentOnDragSelection(selection.through(value))
+                    previous = value
+                }
+            }
+        }
+    }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        available.forEach { value ->
+            EditorChoice("$value", value in selected, enabled, "${tag}_$value", description = description(value),
+                modifier = Modifier.onGloballyPositioned { bounds[value] = it.boundsInParent() }) { onClick(value) }
+        }
+    }
+}
+
 @Composable
 private fun EditorWeekChoices(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String,
     onChange: (List<Int>) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(courseWeekSummary(selected), Modifier.testTag(tag + "_summary"), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CourseWeekPreset.entries.forEach { preset ->
                 val choice = preset.select(available)
@@ -297,13 +345,10 @@ private fun EditorWeekChoices(available: List<Int>, selected: List<Int>, enabled
                     role = Role.Button) { onChange(choice) }
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            available.forEach { week ->
-                EditorChoice("$week", week in selected, enabled, tag + "_$week", description = "第 $week 周") {
-                    onChange(if (week in selected) selected - week else (selected + week).sorted())
-                }
-            }
-        }
+        EditorSelectionGrid(available, selected, enabled, tag, { "第 $it 周" },
+            onClick = { week -> onChange(if (week in selected) selected - week else (selected + week).sorted()) },
+            onDragSelection = onChange)
+        Text(courseWeekSummary(selected), Modifier.testTag(tag + "_summary"), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
     }
 }
 

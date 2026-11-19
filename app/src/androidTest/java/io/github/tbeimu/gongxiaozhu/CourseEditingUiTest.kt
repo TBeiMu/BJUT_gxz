@@ -28,10 +28,11 @@ class CourseEditingUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val monday = LocalDate.of(2026, 11, 9)
     private val identity = ScheduleIdentity("fictional-course-editor")
-    private fun schoolData() = ScheduleData(identity = identity, complete = SemesterSchedule(identity,
-        ScheduleTerm("2026-2027", "1", 2, 1), (1..2).map { w ->
+    private fun schoolData(weekCount: Int = 2, occupied: IntRange = 1..weekCount, lessons: List<Int> = listOf(1, 2)) =
+        ScheduleData(identity = identity, complete = SemesterSchedule(identity,
+        ScheduleTerm("2026-2027", "1", weekCount, 1), (1..weekCount).map { w ->
             val dates = (0L..6L).map { monday.plusWeeks(w - 1L).plusDays(it).toString() }
-            ScheduleWeek(w, dates, listOf(ScheduleCourse("fictional-course", "测试课程", dates[0], listOf(1, 2))))
+            ScheduleWeek(w, dates, if (w in occupied) listOf(ScheduleCourse("fictional-course", "测试课程", dates[0], lessons)) else emptyList())
         }, 1))
     @Test fun plusOpensOnlyMenuAndGraduateOptionUsesExistingCallback() {
         var requests = 0
@@ -129,7 +130,7 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
         compose.onNodeWithTag("save_course").performClick()
         assertEquals("临时调课", data.value.complete!!.weeks[0].courses.single().name)
-        assertEquals("测试课程", data.value.complete!!.weeks[1].courses.single().name)
+        assertEquals("临时调课", data.value.complete!!.weeks[1].courses.single().name)
         compose.onNodeWithTag("agenda_day_2").performClick()
         compose.onNodeWithTag("agenda_course_2_1").performClick()
         compose.onNodeWithText("删除", substring = false).performClick()
@@ -137,23 +138,26 @@ class CourseEditingUiTest {
         assertTrue(data.value.complete!!.weeks[0].courses.isEmpty())
         assertEquals(1, data.value.complete!!.weeks[1].courses.size)
     }
-    @Test fun largeFontEditorKeepsSaveVisibleAndAllowsReverseAndSingleLessonSelection() {
-        val context = ScheduleData().courseEditor()
+    @Test fun largeFontEditorKeepsSaveVisibleAndAllowsReverseRangeAndTapDeselection() {
+        val data = ScheduleData(localTerms = listOf(LocalScheduleTerm(
+            "large-font-term", monday.toString(), 2, courses = listOf(CustomCourse("large-font-course", "大字课程",
+                occurrences = listOf(CustomOccurrence(1, 1, listOf(1, 2))))))), selectedLocalTermId = "large-font-term")
+        val context = data.courseEditor(data.display()!!.weeks[0].courses.single())
         compose.setContent { GongXiaoZhuTheme {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.8f)) {
                 Box(Modifier.width(360.dp).height(580.dp)) { CourseEditor(context, false, null, {}, {}) }
             }
         } }
-        compose.onNodeWithTag("course_name").performTextInput("大字课程")
         compose.onNodeWithTag("save_course").assertIsDisplayed()
         compose.onNodeWithTag("course_lesson_12").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_hint").assertTextEquals("已选第 12 节，再点结束节次")
         compose.onNodeWithTag("save_course").assertIsEnabled()
         compose.onNodeWithTag("course_lesson_1").performScrollTo().performClick()
         compose.onNodeWithTag("course_lesson_12").assertIsSelected()
         compose.onNodeWithTag("course_lesson_12").performScrollTo().performClick()
-        compose.onNodeWithTag("course_lesson_12").assertIsSelected()
-        compose.onNodeWithTag("course_lesson_1").assertIsNotSelected()
+        compose.onNodeWithTag("course_lesson_12").assertIsNotSelected()
+        compose.onNodeWithTag("course_lesson_1").assertIsSelected()
         compose.onNodeWithTag("course_lesson_13").assertDoesNotExist()
         compose.onNodeWithTag("save_course").assertIsEnabled()
         val selectedDay = context.defaultWeekday
@@ -204,15 +208,65 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("course_original_schedule").assertTextEquals("原有安排：第 1–2 周 · 周一 · 第 1–2 节")
         compose.onNodeWithTag("source_week_all").assertDoesNotExist()
         compose.onNodeWithTag("target_week_1").assertIsSelected()
-        compose.onNodeWithTag("target_week_2").assertIsNotSelected()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
         compose.onNodeWithTag("target_week_1").performScrollTo().performClick()
-        compose.onNodeWithTag("target_week_2").performClick()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("target_week_1").assertIsNotSelected()
         compose.onNodeWithTag("target_week_2").assertIsSelected()
         compose.onNodeWithTag("save_course").performClick()
-        assertEquals(listOf(1), saved!!.sourceWeeks)
+        assertEquals(listOf(1, 2), saved!!.sourceWeeks)
         assertEquals(listOf(2), saved!!.targetWeeks)
+    }
+    @Test fun fullOriginalWeeksAreSelectedAndDraggingOnlyAddsWhileTapsRemove() {
+        var saved: CourseDraft? = null
+        val data = schoolData(20, 10..17, (9..12).toList())
+        val edit = data.courseEditor(data.complete!!.weeks[12].courses.single())
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        (9..12).forEach { compose.onNodeWithTag("course_lesson_$it").assertIsSelected() }
+        (1..20).forEach { week ->
+            if (week in 10..17) compose.onNodeWithTag("target_week_$week").assertIsSelected()
+            else compose.onNodeWithTag("target_week_$week").assertIsNotSelected()
+        }
+        compose.onNodeWithTag("target_week_10").performScrollTo()
+        capture("course_editor", "editor-original-weeks")
+        dragChoice("target_week_10", "target_week_12")
+        (10..12).forEach { compose.onNodeWithTag("target_week_$it").assertIsSelected() }
+        (10..12).forEach { compose.onNodeWithTag("target_week_$it").performScrollTo().performClick() }
+        (13..17).forEach { compose.onNodeWithTag("target_week_$it").assertIsSelected() }
+        dragChoice("target_week_8", "target_week_10")
+        (15..17).forEach { compose.onNodeWithTag("target_week_$it").performScrollTo().performClick() }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals((10..17).toList(), saved!!.sourceWeeks)
+        assertEquals(listOf(8, 9, 10, 13, 14), saved!!.targetWeeks)
+    }
+    @Test fun lessonDraggingOnlyAddsAndSelectedLessonsAreRemovedByTaps() {
+        var saved: CourseDraft? = null
+        val data = schoolData(20, 10..17, (9..12).toList())
+        val edit = data.courseEditor(data.complete!!.weeks[12].courses.single())
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        dragChoice("course_lesson_12", "course_lesson_10")
+        (9..12).forEach { compose.onNodeWithTag("course_lesson_$it").assertIsSelected() }
+        (10..12).forEach { compose.onNodeWithTag("course_lesson_$it").performScrollTo().performClick() }
+        compose.onNodeWithTag("course_lesson_9").assertIsSelected()
+        (10..12).forEach { compose.onNodeWithTag("course_lesson_$it").assertIsNotSelected() }
+        compose.onNodeWithTag("course_lesson_hint").assertDoesNotExist()
+        dragChoice("course_lesson_6", "course_lesson_8")
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals((6..9).toList(), saved!!.lessons)
+        (6..9).forEach { compose.onNodeWithTag("course_lesson_$it").performScrollTo().performClick() }
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithText("请至少选择一个节次").assertExists()
+    }
+    private fun dragChoice(fromTag: String, toTag: String) {
+        val from = compose.onNodeWithTag(fromTag)
+        val to = compose.onNodeWithTag(toTag)
+        from.performScrollTo()
+        to.performScrollTo()
+        from.assertIsDisplayed(); to.assertIsDisplayed()
+        val offset = to.fetchSemanticsNode().boundsInRoot.center - from.fetchSemanticsNode().boundsInRoot.center
+        from.performTouchInput { swipe(center, center + offset, durationMillis = 450) }
     }
     @Test fun originalLessonsAndPendingRangeSurviveRestoration() {
         var saved: CourseDraft? = null

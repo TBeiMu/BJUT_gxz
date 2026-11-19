@@ -1,5 +1,6 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
+import io.github.tbeimu.gongxiaozhu.schedule.*
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -19,6 +20,13 @@ class CourseEditorSelectionTest {
         assertEquals(listOf(10, 11, 12), range.lessons)
         assertEquals(listOf(3), range.select(3).lessons)
         assertEquals(listOf(3), range.select(3).select(3).lessons)
+    }
+
+    @Test fun tappingSelectedLessonsRemovesOnlyThatLessonWithoutStartingARange() {
+        val selection = CourseLessonSelection((9..12).toList()).select(12).select(9)
+        assertEquals(listOf(10, 11), selection.lessons)
+        assertNull(selection.anchor)
+        assertTrue(CourseLessonSelection(listOf(9)).select(9).lessons.isEmpty())
     }
 
     @Test fun lessonSelectionStopsAtTwelve() {
@@ -43,12 +51,48 @@ class CourseEditorSelectionTest {
         assertEquals(emptyList<Int>(), CourseWeekPreset.EVEN.select(listOf(1)))
     }
 
-    @Test fun oneTargetSelectionMovesTheClickedOccurrenceAndKeepsOriginalRangeForDisplay() {
+    @Test fun resultingWeekChangesKeepOriginalSourceScope() {
         val initial = CourseWeekSelection(listOf(1, 2, 3), listOf(1))
         val moved = initial.withTargets(listOf(8, 6, 8))
         assertEquals(listOf(1, 2, 3), moved.sourceWeeks)
         assertEquals(listOf(6, 8), moved.targetWeeks)
         assertEquals(listOf(1), initial.targetWeeks)
+    }
+
+    @Test fun editorInitiallySelectsEveryMatchingOriginalWeekAndDeleteStillDefaultsToClickedWeek() {
+        val data = ScheduleData(localTerms = listOf(LocalScheduleTerm(
+            "term", "2026-11-02", 20, courses = listOf(CustomCourse("course", "测试课程",
+                occurrences = (10..17).map { CustomOccurrence(it, 2, (9..12).toList()) })))),
+            selectedLocalTermId = "term")
+        val course = data.display()!!.weeks[12].courses.single()
+        val initial = CourseWeekSelection.initial(data.courseEditor(course))
+        assertEquals((10..17).toList(), initial.sourceWeeks)
+        assertEquals((10..17).toList(), initial.targetWeeks)
+        assertEquals(listOf(13), CourseWeekSelection.initial(data.courseEditor(course, deleteOnly = true)).sourceWeeks)
+        val added = CourseWeekSelection.initial(data.courseEditor(week = 7))
+        assertTrue(added.sourceWeeks.isEmpty())
+        assertEquals(listOf(7), added.targetWeeks)
+    }
+
+    @Test fun draggingUnselectedOptionAddsForwardOrReverseRangeAndPreservesOtherSelections() {
+        val selection = CourseDragSelection(listOf(1, 12), (1..20).toList(), 8)
+        assertEquals(listOf(1, 8, 9, 10, 11, 12), selection.through(12))
+        assertEquals(listOf(1, 5, 6, 7, 8, 12), selection.through(5))
+        assertEquals(listOf(1, 8, 12), selection.through(8))
+    }
+
+    @Test fun draggingFromSelectedOptionNeverRemovesAnyOriginalSelection() {
+        val selection = CourseDragSelection((10..17).toList(), (1..20).toList(), 15)
+        assertEquals((10..17).toList(), selection.through(17))
+        assertEquals((10..17).toList(), selection.through(16))
+        assertEquals((10..17).toList(), selection.through(13))
+    }
+
+    @Test fun dragSupportsSparseWeeksAndReplacingLegacyLessonsWithoutInventingNewLateLessons() {
+        assertEquals(listOf(2, 4, 8), CourseDragSelection(emptyList(), listOf(2, 4, 8), 2).through(8))
+        assertEquals(listOf(9, 10), CourseDragSelection(listOf(13, 14), (1..12).toList(), 9).through(10))
+        assertEquals(listOf(9, 10), CourseDragSelection(listOf(9, 10), (1..12).toList(), 9).through(10))
+        assertEquals("未选择节次", courseLessonSummary(emptyList()))
     }
 
     @Test fun explicitlyClearedTargetsRemainEmptyWhenDeleteScopeChanges() {

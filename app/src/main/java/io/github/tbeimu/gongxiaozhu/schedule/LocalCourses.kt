@@ -122,10 +122,8 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     check(this == context.expected, "课表已变化，请关闭后重新编辑")
     val source = context.course
     if (source != null) {
-        val validSourceWeeks = if (context.deleteOnly) draft.sourceWeeks.isNotEmpty() &&
-            draft.sourceWeeks.all { it in context.availableWeeks }
-        else draft.sourceWeeks == listOf(context.defaultWeek)
-        check(validSourceWeeks, if (context.deleteOnly) "请选择原安排范围" else "编辑时只能替换点击的本次安排")
+        check(draft.sourceWeeks.isNotEmpty() && draft.sourceWeeks.all { it in context.availableWeeks },
+            "原有安排已变化，请关闭后重新编辑")
     }
     if (!context.deleteOnly) {
         check(draft.name.isNotBlank() && draft.name.length <= 300, "请填写课程名（最多 300 字）")
@@ -140,7 +138,7 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
         check(draft.lessons.isNotEmpty() && draft.lessons.distinct().size == draft.lessons.size &&
             (draft.lessons.all { it in 1..12 } || keepsOriginalLateLessons), "节次只能选择第 1–12 节")
         check(!keepsOriginalLateLessons || draft.lessons.all { it in 1..12 } ||
-            (draft.targetWeeks == listOf(context.defaultWeek) && draft.weekdays == listOf(context.defaultWeekday)),
+            (draft.targetWeeks.all { it in draft.sourceWeeks } && draft.weekdays == listOf(context.defaultWeekday)),
             "原有第 13 节及以后的安排只能保留在原周次和星期")
         check(context.creatingTerm || (draft.firstMonday == context.firstMonday && draft.weekCount == context.weekCount), "学期已变化，请重新编辑")
     }
