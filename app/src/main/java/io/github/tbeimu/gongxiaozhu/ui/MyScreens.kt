@@ -44,7 +44,7 @@ import java.util.Date
 internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
     SHUTTLE("校车时刻表", AppGlyph.BUS),
     SCHEDULE("课表管理", AppGlyph.CALENDAR), ACCOUNTS("校园网账号", AppGlyph.PERSON),
-    NETWORK("校园网连接", AppGlyph.WIFI), APPEARANCE("外观设置", AppGlyph.IMAGE),
+    NETWORK("校园网连接", AppGlyph.WIFI), APPEARANCE("个性化", AppGlyph.IMAGE),
     UPDATES("检查更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
 }
 

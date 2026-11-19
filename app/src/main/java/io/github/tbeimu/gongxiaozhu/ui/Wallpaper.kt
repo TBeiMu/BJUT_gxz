@@ -214,7 +214,7 @@ internal fun wallpaperPresetColors(preset: WallpaperPreset, dark: Boolean): List
     return wallpaperPresetSwatch(preset).map { lerp(it, Color(0xFF0F1115), .9f) }
 }
 
-/** The preset's own colour, as shown on its swatch in 外观设置: the hue the paper is tinted with. */
+/** The preset's own colour, as shown on its swatch in 个性化: the hue the paper is tinted with. */
 internal fun wallpaperPresetSwatch(preset: WallpaperPreset): List<Color> = when (preset) {
     WallpaperPreset.BLUE_CYAN -> listOf(0xFFA9CDF4, 0xFFD0EAF0, 0xFFE5E8FA)
     WallpaperPreset.MINT -> listOf(0xFFA8DCCB, 0xFFD3EDE2, 0xFFE6F0ED)
