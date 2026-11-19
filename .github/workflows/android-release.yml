@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      source_commit:
+        description: 同版本替换所用的完整源码提交 SHA；留空仍使用版本标签
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -34,13 +39,24 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: 校验同版本源码参数
+        if: inputs.source_commit != ''
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REPLACE_EXISTING: ${{ inputs.replace_existing }}
+        run: |
+          [[ "$REPLACE_EXISTING" == 'true' && "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo '源码提交仅允许在同版本替换时指定完整 SHA'; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.source_commit || inputs.tag || github.ref }}
       - name: 检查版本和更新说明
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '标签格式错误'; exit 1; }
           test -f "docs/releases/$RELEASE_TAG.md" || { echo '缺少中文更新说明'; exit 1; }
+          test -z "$SOURCE_COMMIT" || test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT" || { echo '源码提交不匹配'; exit 1; }
+          echo "构建源码：$(git rev-parse HEAD)"
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
