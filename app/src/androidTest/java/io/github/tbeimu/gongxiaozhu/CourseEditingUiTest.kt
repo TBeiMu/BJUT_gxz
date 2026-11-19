@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsProperties
 import android.graphics.Bitmap
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -259,6 +260,42 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("save_course").assertIsNotEnabled()
         compose.onNodeWithText("请至少选择一个节次").assertExists()
     }
+    @Test fun ordinarySwipesScrollFromUnselectedLessonsAndWeeksWithoutChangingDraft() {
+        var saved: CourseDraft? = null
+        val data = schoolData(60, 10..17, (9..12).toList())
+        val edit = data.courseEditor(data.complete!!.weeks[12].courses.single())
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        swipeChoiceUp("course_lesson_6")
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals((9..12).toList(), saved!!.lessons)
+        swipeChoiceUp("target_week_20")
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals((10..17).toList(), saved!!.sourceWeeks)
+        assertEquals((10..17).toList(), saved!!.targetWeeks)
+        assertEquals((9..12).toList(), saved!!.lessons)
+    }
+    @Test fun holdingUnselectedWeekAddsItOnceAndReleaseDoesNotToggleItOff() {
+        var saved: CourseDraft? = null
+        val data = schoolData(20, 10..17, (9..12).toList())
+        val edit = data.courseEditor(data.complete!!.weeks[12].courses.single())
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        compose.onNodeWithTag("target_week_8").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithTag("target_week_8").assertIsSelected()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(8) + (10..17).toList(), saved!!.targetWeeks)
+    }
+    private fun swipeChoiceUp(tag: String) {
+        val choice = compose.onNodeWithTag(tag)
+        choice.performScrollTo().assertIsDisplayed().assertIsNotSelected()
+        val body = compose.onNodeWithTag("course_editor_body")
+        val before = body.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        val distance = minOf(with(compose.density) { 140.dp.toPx() },
+            choice.fetchSemanticsNode().boundsInRoot.center.y - body.fetchSemanticsNode().boundsInRoot.top - 4f)
+        assertTrue("测试滑动须越过触摸阈值", distance > with(compose.density) { 48.dp.toPx() })
+        choice.performTouchInput { swipe(center, center + Offset(0f, -distance), durationMillis = 450) }
+        val after = body.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        assertTrue("从未选项上普通滑动应滚动正文", after > before)
+    }
     private fun dragChoice(fromTag: String, toTag: String) {
         val from = compose.onNodeWithTag(fromTag)
         val to = compose.onNodeWithTag(toTag)
@@ -266,7 +303,12 @@ class CourseEditingUiTest {
         to.performScrollTo()
         from.assertIsDisplayed(); to.assertIsDisplayed()
         val offset = to.fetchSemanticsNode().boundsInRoot.center - from.fetchSemanticsNode().boundsInRoot.center
-        from.performTouchInput { swipe(center, center + offset, durationMillis = 450) }
+        from.performTouchInput {
+            down(center)
+            advanceEventTime(android.view.ViewConfiguration.getLongPressTimeout().toLong() + 100)
+            repeat(15) { moveTo(center + offset * ((it + 1) / 15f), delayMillis = 30) }
+            up()
+        }
     }
     @Test fun originalLessonsAndPendingRangeSurviveRestoration() {
         var saved: CourseDraft? = null
@@ -306,6 +348,30 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("save_course").assertIsEnabled()
         compose.onNodeWithTag("save_course").performClick()
         assertEquals(listOf(1), saved!!.lessons)
+    }
+    @Test fun partiallyRemovingLegacyLessonsBlocksSaveUntilValidLessonsAreChosen() {
+        var saved: ScheduleData? = null
+        var requests = 0
+        val data = schoolData(20, 10..17, listOf(12, 13))
+        val edit = data.courseEditor(data.complete!!.weeks[12].courses.single())
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, {
+            requests++; saved = data.editCourse(edit, it)
+        }) } }
+        compose.onNodeWithTag("save_course").assertIsEnabled().performClick()
+        assertEquals(1, requests)
+        assertEquals(listOf(12, 13), saved!!.complete!!.weeks[12].courses.single().lessons)
+        compose.onNodeWithTag("course_lesson_12").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_summary").assertTextEquals("第 13 节")
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithText("修改节次请重新选择第 1–12 节").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithTag("course_lesson_1").performScrollTo().performClick()
+        compose.onNodeWithText("修改节次请重新选择第 1–12 节").assertDoesNotExist()
+        compose.onNodeWithTag("save_course").assertIsEnabled().performClick()
+        assertEquals(2, requests)
+        assertTrue(saved!!.complete!!.weeks.filter { it.number in 10..17 }.all { it.courses.single().lessons == listOf(1) })
     }
     @Test fun savingDisablesActionsAndFailureKeepsDraftForRetry() {
         var saving by mutableStateOf(false)

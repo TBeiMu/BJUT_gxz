@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -68,13 +69,15 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     val weeks = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
     val originalWeeks = context.originalArrangements.map { it.week }.distinct()
     val preservesLateLessons = course?.lessons?.any { it !in 1..12 } == true && selectedLessons.lessons == course.lessons
+    val validLessons = selectedLessons.lessons.isNotEmpty() &&
+        (selectedLessons.lessons.all { it in 1..12 } || preservesLateLessons)
     val valid = name.isNotBlank() && weeks > 0 && weekdays.isNotEmpty() &&
         selectedWeeks.targetWeeks.isNotEmpty() && selectedWeeks.targetWeeks.all {
             it in 1..weeks || it in originalWeeks
         } &&
         (!preservesLateLessons || (selectedWeeks.targetWeeks.all { it in selectedWeeks.sourceWeeks } &&
             weekdays == listOf(context.defaultWeekday))) &&
-        selectedLessons.lessons.isNotEmpty() &&
+        validLessons &&
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
     fun draft() = CourseDraft(name, location, teacher, weekdays,
         if (course != null) selectedWeeks.sourceWeeks else emptyList(), selectedWeeks.targetWeeks,
@@ -162,6 +165,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
                     style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
             }
             if (selectedLessons.lessons.isEmpty()) EditorError("请至少选择一个节次")
+            else if (!validLessons) EditorError("修改节次请重新选择第 1–12 节")
         }
         if (course != null) {
             val original = context.originalArrangements.ifEmpty {
@@ -291,7 +295,7 @@ private fun EditorChoice(label: String, selected: Boolean, enabled: Boolean, tag
     }
 }
 
-/** Only unselected options start an adding drag; selected options and gaps allow scrolling. */
+/** Long-press an unselected option to add a range; ordinary swipes always allow scrolling. */
 @Composable
 private fun EditorSelectionGrid(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String,
     description: (Int) -> String, onClick: (Int) -> Unit, onDragSelection: (List<Int>) -> Unit) {
@@ -301,24 +305,24 @@ private fun EditorSelectionGrid(available: List<Int>, selected: List<Int>, enabl
     FlowRow(Modifier.fillMaxWidth().testTag(tag + "_grid").pointerInput(available, enabled) {
         if (!enabled) return@pointerInput
         awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val down = awaitFirstDown(requireUnconsumed = false)
             val start = bounds.entries.firstOrNull { it.value.contains(down.position) }?.key ?: return@awaitEachGesture
             if (start in currentSelected) return@awaitEachGesture
+            val held = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+            if (held.id != down.id || currentEvent.changes.count { it.pressed } != 1) return@awaitEachGesture
             val selection = CourseDragSelection(currentSelected, available, start)
-            var dragging = false
-            var previous: Int? = null
+            currentOnDragSelection(selection.through(start))
+            var previous = start
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                 if (!change.pressed) {
-                    if (dragging) change.consume()
+                    change.consume()
                     break
                 }
                 if (change.isConsumed || event.changes.count { it.pressed } != 1) break
-                if (!dragging && (change.position - down.position).getDistance() <= viewConfiguration.touchSlop) continue
-                dragging = true
                 change.consume()
-                val value = bounds.entries.firstOrNull { it.value.contains(change.position) }?.key ?: previous ?: start
+                val value = bounds.entries.firstOrNull { it.value.contains(change.position) }?.key ?: previous
                 if (value != previous) {
                     currentOnDragSelection(selection.through(value))
                     previous = value
