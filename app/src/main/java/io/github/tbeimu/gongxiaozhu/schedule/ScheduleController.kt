@@ -29,7 +29,7 @@ data class ScheduleUiState(val data: ScheduleData = ScheduleData(), val loading:
     val busy: Boolean = false, val blocked: Boolean = false, val page: ScheduleLoginPage? = null,
     val message: String = "导入研究生课表，离线也能查看整个学期", val imported: Int = 0, val total: Int = 0,
     val networkKind: ScheduleNetworkKind? = null, val notice: ScheduleNotice = ScheduleNotice.IDLE,
-    val taskId: String? = null) {
+    val taskId: String? = null, val courseUndo: CourseUndo? = null) {
     val canCancelImport: Boolean get() = !loading && !blocked && !busy &&
         (data.pending != null || notice == ScheduleNotice.PAUSED || notice == ScheduleNotice.ERROR)
 }
@@ -48,11 +48,13 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     private var generation = 0L
     private var networkTask = false
     private var serviceReady: CompletableDeferred<Unit>? = null
+    private var courseUndoGeneration = 0L
 
     init { reload() }
     fun enterForeground() { foreground = true }
     fun leaveForeground() {
         foreground = false
+        dismissCourseUndo()
         // An already submitted operation belongs to the service. An idle login form does not.
         if (state.value.taskId == null) pause()
     }
@@ -70,6 +72,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     }
 
     fun reload() {
+        dismissCourseUndo()
         if (job != null) return
         runTask {
             try { val data = io { repository.load() }; mutable.value = ScheduleUiState(data, loading = false,
@@ -84,6 +87,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
 
     fun start() {
         if (!foreground || job != null || state.value.blocked) return
+        dismissCourseUndo()
         val selected = network?.takeIf { observed } ?: run { message("请连接可上网的 WiFi 或开启移动数据，再导入课表"); return }
         closeSession()
         networkTask = true
@@ -164,6 +168,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     /** Called after confirmation. Finish old request cleanup before touching its saved progress. */
     fun cancelImport() {
         if (state.value.loading || state.value.blocked || (job != null && !networkTask)) return
+        dismissCourseUndo()
         val old = job
         pause()
         mutable.value = state.value.copy(page = null, notice = ScheduleNotice.PROGRESS, message = "正在取消本次导入…")
@@ -177,6 +182,7 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
 
     /** Only invoked after the UI confirms replacement/unbinding or damaged-cache recovery. */
     fun clear() {
+        dismissCourseUndo()
         val old = job
         val damaged = state.value.blocked
         pause()
@@ -190,8 +196,40 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
     fun unsupportedWebView() { pause(ScheduleProblem.WEBVIEW.hint) }
     fun message(text: String) { mutable.value = state.value.copy(message = text, notice = ScheduleNotice.ERROR) }
 
-    suspend fun editCourse(context: CourseEditContext, draft: CourseDraft) = localWrite { repository.edit(context, draft) }
-    suspend fun selectLocalTerm(id: String?) = localWrite { repository.selectLocalTerm(id) }
+    suspend fun editCourse(context: CourseEditContext, draft: CourseDraft): CourseUndo? {
+        dismissCourseUndo()
+        val attempt = courseUndoGeneration
+        var result: CourseEditResult? = null
+        try {
+            localWrite { repository.editWithUndo(context, draft).also { result = it }.data }
+            val action = result?.undo?.takeIf { foreground && attempt == courseUndoGeneration }
+            mutable.value = state.value.copy(courseUndo = action)
+            return action
+        } finally {
+            // Disk writes can finish after cancellation or after the app leaves the foreground.
+            // Retire their token without ever publishing a new snackbar action.
+            result?.undo?.takeIf { state.value.courseUndo?.token != it.token }?.let { unpublished ->
+                withContext(NonCancellable + ioDispatcher) { repository.dismissCourseUndo(unpublished.token) }
+            }
+        }
+    }
+    suspend fun undoCourse(token: String) {
+        if (state.value.courseUndo?.token != token)
+            throw CourseValidationException("课表已变化，无法撤销此次操作")
+        localWrite { repository.undo(token) }
+        dismissCourseUndo(token)
+    }
+    fun dismissCourseUndo(token: String? = null) {
+        val action = state.value.courseUndo
+        if (token != null && action?.token != token) return
+        courseUndoGeneration++
+        mutable.value = state.value.copy(courseUndo = null)
+        if (action != null) scope.launch { io { repository.dismissCourseUndo(action.token) } }
+    }
+    suspend fun selectLocalTerm(id: String?) {
+        dismissCourseUndo()
+        localWrite { repository.selectLocalTerm(id) }
+    }
     private suspend fun localWrite(action: () -> ScheduleData) {
         if (!foreground || job != null || state.value.loading || state.value.blocked || state.value.page != null) {
             throw CourseValidationException("请等待当前课表任务结束后再操作")
@@ -199,12 +237,16 @@ class ScheduleController(private val scope: CoroutineScope, private val reposito
         val owned = currentCoroutineContext()[Job]!!
         job = owned
         mutable.value = state.value.copy(busy = true)
+        var committed: ScheduleData? = null
         try {
             awaitClosedSessions()
-            val data = io(action)
+            val data = io { action().also { committed = it } }
             mutable.value = state.value.copy(data = data)
         } finally {
-            if (job === owned) { job = null; mutable.value = state.value.copy(busy = false) }
+            if (job === owned) {
+                job = null
+                mutable.value = state.value.copy(busy = false, data = committed ?: state.value.data)
+            }
         }
     }
 

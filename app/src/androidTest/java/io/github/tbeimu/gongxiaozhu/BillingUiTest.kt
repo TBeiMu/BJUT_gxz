@@ -10,20 +10,31 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -98,10 +109,7 @@ class BillingUiTest {
         assertEquals(device.sessionId, selected)
         selected = null
         compose.onNodeWithTag("billing_offline").performScrollTo().performClick()
-        compose.onNodeWithText("选择要注销的在线设备").assertExists()
-        assertTrue(chooserVisible)
-        assertNull(selected)
-        compose.onNodeWithTag("choose_offline_0").performClick()
+        compose.onNodeWithText("选择要注销的在线设备").assertDoesNotExist()
         compose.waitForIdle()
         assertFalse(chooserVisible)
         assertEquals(device.sessionId, selected)
@@ -118,6 +126,123 @@ class BillingUiTest {
         assertEquals(3, compose.onAllNodes(hasText("—")).fetchSemanticsNodes().size)
         compose.onNodeWithText("在线设备读取失败").performScrollTo().assertExists()
         compose.onNodeWithTag("offline_device_0").assertDoesNotExist()
+        compose.onNodeWithTag("billing_offline").assertIsNotEnabled()
+    }
+
+    @Test fun multipleDevicesStillRequireSelectionAndChoosingOnlyRequestsConfirmation() {
+        val selected = mutableListOf<String>()
+        val other = device.copy(sessionId = "second-fake-session", ip = "192.0.2.11")
+        compose.setContent { BillingPreviewTheme {
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(
+                snapshot = BillingSnapshot(metrics, listOf(device, other)))), Modifier, {}, {}, selected::add)
+        } }
+        compose.onNodeWithTag("billing_offline").performScrollTo().performClick()
+        compose.onNodeWithText("选择要注销的在线设备").assertIsDisplayed()
+        assertTrue(selected.isEmpty())
+        compose.onNodeWithText("返回").performClick()
+        assertTrue(selected.isEmpty())
+        compose.onNodeWithTag("billing_offline").performClick()
+        compose.onNodeWithTag("choose_offline_1").performClick()
+        assertEquals(listOf(other.sessionId), selected)
+        compose.onNodeWithText("选择要注销的在线设备").assertDoesNotExist()
+    }
+
+    @Test fun captchaDoneSubmitsOnlyExplicitCompleteInputAndHidesKeyboard() {
+        val requests = mutableListOf<String?>()
+        val billing = mutableStateOf(BillingUiState(captcha = byteArrayOf(1)))
+        var hidden = 0
+        val keyboard = object : SoftwareKeyboardController {
+            override fun show() = Unit
+            override fun hide() { hidden++ }
+        }
+        compose.setContent { BillingPreviewTheme {
+            CompositionLocalProvider(LocalSoftwareKeyboardController provides keyboard) {
+                BillingScreen(AppUiState(data = data, loading = false, billing = billing.value), Modifier, {}, { code ->
+                    requests += code
+                    billing.value = billing.value.copy(running = true)
+                }, {})
+            }
+        } }
+        val captcha = compose.onNodeWithTag("billing_captcha")
+        assertEquals(ImeAction.Done, captcha.fetchSemanticsNode().config[SemanticsProperties.ImeAction])
+        captcha.performScrollTo().performClick()
+        captcha.performImeAction()
+        assertTrue(requests.isEmpty())
+        captcha.performTextInput("123")
+        captcha.performImeAction()
+        assertTrue(requests.isEmpty())
+        compose.onNodeWithTag("billing_login").assertIsNotEnabled()
+        captcha.performTextInput("4")
+        assertTrue("输入满四位不能自动提交", requests.isEmpty())
+        captcha.performImeAction()
+        // Disabled text fields omit Focused instead of exposing Focused=false.
+        captcha.assert(isFocused().not())
+        assertEquals(listOf("1234"), requests)
+        assertEquals(1, hidden)
+        compose.onNodeWithTag("billing_login").assertIsNotEnabled()
+        compose.runOnIdle { billing.value = billing.value.copy(running = false, captcha = byteArrayOf(2), message = "验证码未通过，请重填") }
+        captcha.assertIsNotFocused()
+        assertEquals("", captcha.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        captcha.performScrollTo().performClick()
+        captcha.performTextInput("5678")
+        assertEquals(1, requests.size)
+        compose.onNodeWithTag("billing_login").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(listOf("1234", "5678"), requests)
+        captcha.assert(isFocused().not())
+        assertEquals(2, hidden)
+        compose.runOnIdle { billing.value = billing.value.copy(running = false) }
+        captcha.assertIsNotFocused()
+    }
+
+    @Test fun imeAndButtonFromSameFrameDispatchOnceAndSynchronousFailureCanRetry() {
+        val requests = mutableListOf<String?>()
+        compose.setContent { BillingPreviewTheme {
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(captcha = byteArrayOf(1))),
+                Modifier, {}, requests::add, {})
+        } }
+        val captcha = compose.onNodeWithTag("billing_captcha")
+        captcha.performScrollTo().performTextInput("1234")
+        val ime = captcha.fetchSemanticsNode().config[SemanticsActions.OnImeAction].action!!
+        val click = compose.onNodeWithTag("billing_login").fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+        compose.runOnIdle {
+            ime()
+            click()
+            ime()
+            assertEquals(listOf("1234"), requests)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("billing_login").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(listOf("1234", "1234"), requests)
+    }
+
+    @Test fun captchaSubmissionRequiresUsableAccountAndResetsWhenAccountChanges() {
+        val requests = mutableListOf<String?>()
+        val app = mutableStateOf(AppUiState(data = data, loading = false, billing = BillingUiState(captcha = byteArrayOf(1))))
+        compose.setContent { BillingPreviewTheme {
+            BillingScreen(app.value, Modifier, {}, requests::add, {})
+        } }
+        val captcha = compose.onNodeWithTag("billing_captcha")
+        captcha.performScrollTo().performTextInput("1234")
+        for (unavailable in listOf(app.value.copy(loading = true), app.value.copy(storageBlocked = true),
+            app.value.copy(busy = true), app.value.copy(billing = app.value.billing.copy(running = true)))) {
+            compose.runOnIdle { app.value = unavailable }
+            compose.onNodeWithTag("billing_login").assertIsNotEnabled()
+            if (!unavailable.busy && !unavailable.billing.running) captcha.performImeAction()
+            assertTrue(requests.isEmpty())
+        }
+        compose.runOnIdle { app.value = app.value.copy(loading = false, busy = false, storageBlocked = false,
+            billing = app.value.billing.copy(running = false), data = AccountState()) }
+        assertEquals("", captcha.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        captcha.performTextInput("5678")
+        captcha.performImeAction()
+        assertTrue(requests.isEmpty())
+        compose.onNodeWithTag("billing_login").assertIsNotEnabled()
+        val other = account.copy(id = "other-fake-id", username = "other-billing-demo")
+        compose.runOnIdle { app.value = app.value.copy(data = AccountState(listOf(other), other.id)) }
+        assertEquals("", captcha.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        captcha.performTextInput("9012")
+        captcha.performImeAction()
+        assertEquals(listOf("9012"), requests)
     }
 
     @Test fun queryStatusKeepsActionsStillAndDisablesDuplicateOperations() {

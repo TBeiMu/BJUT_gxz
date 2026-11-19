@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +38,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -44,7 +48,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +62,7 @@ import androidx.compose.ui.window.SecureFlagPolicy
 import io.github.tbeimu.gongxiaozhu.billing.BillingMetric
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: () -> Unit,
@@ -62,7 +70,28 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val billing = state.billing
     val enabled = !state.busy && !billing.running
     val metrics = billing.snapshot?.metrics.orEmpty()
-    var code by remember(billing.captcha) { mutableStateOf("") }
+    var code by remember(state.data.defaultAccount?.id, billing.captcha) { mutableStateOf("") }
+    var submittingQuery by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val canQuery = enabled && !state.loading && !state.storageBlocked && state.data.defaultAccount != null &&
+        (billing.captcha == null || code.length == 4)
+    val submitQuery: () -> Unit = {
+        if (canQuery && !submittingQuery) {
+            // Close the IME/button race before the controller's running state reaches this composition.
+            submittingQuery = true
+            keyboard?.hide()
+            focusManager.clearFocus()
+            try { onQuery(if (billing.captcha != null) code else null) }
+            finally {
+                scope.launch {
+                    withFrameNanos { }
+                    submittingQuery = false
+                }
+            }
+        }
+    }
     var choosingDevice by remember(billing.snapshot?.devices) { mutableStateOf(false) }
     ReportDialogVisibility(choosingDevice, onDialogVisibilityChanged)
     val context = LocalContext.current
@@ -109,16 +138,22 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
                     ?: Text("验证码图片无法显示，请重新查询或打开学校网页", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(value = code, onValueChange = { code = it.take(4) }, label = { Text("验证码") },
                     singleLine = true, enabled = enabled, shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitQuery() }),
                     modifier = Modifier.fillMaxWidth().testTag("billing_captcha"))
             }
         }
         CtaButton(if (billing.snapshot == null || billing.captcha != null) "登录查询" else "刷新资费",
-            { onQuery(if (billing.captcha != null) code else null) }, Modifier.entrance(40 + Motion.STAGGER * 4).testTag("billing_login"),
-            enabled = enabled && state.data.defaultAccount != null && (billing.captcha == null || code.length == 4))
+            submitQuery, Modifier.entrance(40 + Motion.STAGGER * 4).testTag("billing_login"),
+            enabled = canQuery && !submittingQuery)
         Row(Modifier.fillMaxWidth().entrance(40 + Motion.STAGGER * 5), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onAccounts, enabled = enabled, contentPadding = PaddingValues(horizontal = 8.dp),
                 border = quietBorder, modifier = Modifier.weight(1f).heightIn(min = 46.dp).testTag("billing_accounts")) { Text("管理账号") }
-            OutlinedButton(onClick = { choosingDevice = true }, enabled = enabled && !billing.snapshot?.devices.isNullOrEmpty(),
+            OutlinedButton(onClick = {
+                val devices = billing.snapshot?.devices.orEmpty()
+                if (devices.size == 1) onOffline(devices.single().sessionId)
+                else if (devices.size > 1) choosingDevice = true
+            }, enabled = enabled && !billing.snapshot?.devices.isNullOrEmpty(),
                 contentPadding = PaddingValues(horizontal = 8.dp), border = quietBorder,
                 modifier = Modifier.weight(1f).heightIn(min = 46.dp).testTag("billing_offline")) { Text("注销设备") }
         }

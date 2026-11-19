@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -23,10 +24,13 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -65,6 +69,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var count by rememberSaveable(context.token) { mutableStateOf(context.weekCount.toString()) }
     var countFocused by rememberSaveable(context.token) { mutableStateOf(false) }
     var picker by rememberSaveable(context.token) { mutableStateOf(false) }
+    var discardRequested by rememberSaveable(context.token) { mutableStateOf(false) }
     val newTerm = context.creatingTerm
     val weeks = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
     val originalWeeks = context.originalArrangements.map { it.week }.distinct()
@@ -90,6 +95,17 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         return
     }
 
+    val dirty = courseDraftHasChanges(context, draft())
+    fun requestDismiss() {
+        if (!saving) {
+            if (dirty) discardRequested = true else onDismiss()
+        }
+    }
+    if (discardRequested) {
+        DiscardChangesDialog(onContinue = { discardRequested = false }, onDiscard = { if (!saving) onDismiss() })
+        return
+    }
+
     if (picker) {
         val dateState = rememberDatePickerState(initialSelectedDateMillis = LocalDate.parse(monday).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
         DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = {
@@ -101,8 +117,8 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         return
     }
 
-    CourseEditorDialog(if (course == null) "添加自定义课程" else "编辑课程", saving, valid,
-        onDismiss, { onSave(draft()) }) {
+    CourseEditorDialog(if (course == null) "添加自定义课程" else "编辑课程", saving, valid, !dirty,
+        ::requestDismiss, { onSave(draft()) }) {
         val focus = LocalFocusManager.current
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CourseField(name, {
@@ -193,54 +209,76 @@ private val EditorOptionShape = RoundedCornerShape(12.dp)
 
 /** One scroll owner; the header and actions always fit the space above the IME and system bars. */
 @Composable
-private fun CourseEditorDialog(title: String, saving: Boolean, valid: Boolean,
+private fun CourseEditorDialog(title: String, saving: Boolean, valid: Boolean, dismissOnOutside: Boolean,
     onDismiss: () -> Unit, onSave: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val density = LocalDensity.current
+    val outsideDismissAllowed = dismissOnOutside && !saving
+    val currentDismiss by rememberUpdatedState(onDismiss)
+    var surfaceBounds by remember { mutableStateOf<Rect?>(null) }
+    var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     Dialog(onDismissRequest = { if (!saving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
-            dismissOnBackPress = !saving, dismissOnClickOutside = !saving)) {
+            dismissOnBackPress = !saving, dismissOnClickOutside = outsideDismissAllowed)) {
         CompositionLocalProvider(LocalDensity provides density) {
-            BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
-                contentAlignment = Alignment.Center) {
-                val typography = MaterialTheme.typography
-                val compact = maxHeight < with(density) {
-                    typography.headlineSmall.lineHeight.toDp() + typography.labelLarge.lineHeight.toDp()
-                } + 208.dp
-                val margin = if (compact) 4.dp else 20.dp
-                val dialogHeight = (maxHeight - margin * 2).coerceAtLeast(0.dp)
-                // Landscape IMEs can leave little more than 100dp: share the fixed action row with the title.
-                Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = margin), contentAlignment = Alignment.Center) {
-                    Surface(Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = dialogHeight)
-                        .testTag("course_editor"), shape = RoundedCornerShape(24.dp), color = gxz.glassStrong) {
-                        Column {
-                            if (!compact) {
-                                Text(title, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp).testTag("course_editor_title"),
-                                    style = typography.headlineSmall, color = gxz.ink)
+            Box(Modifier.fillMaxSize().testTag("course_editor_overlay")
+                .onGloballyPositioned { overlayOrigin = it.positionInRoot() }
+                .pointerInput(outsideDismissAllowed) {
+                    if (!outsideDismissAllowed) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        if (surfaceBounds?.contains(down.position + overlayOrigin) != false) return@awaitEachGesture
+                        down.consume()
+                        // Stay on Initial: Main would see this same consumed down and cancel the tap.
+                        val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                        if (up != null && surfaceBounds?.contains(up.position + overlayOrigin) == false) {
+                            up.consume()
+                            currentDismiss()
+                        }
+                    }
+                }) {
+                BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
+                    contentAlignment = Alignment.Center) {
+                    val typography = MaterialTheme.typography
+                    val compact = maxHeight < with(density) {
+                        typography.headlineSmall.lineHeight.toDp() + typography.labelLarge.lineHeight.toDp()
+                    } + 208.dp
+                    val margin = if (compact) 4.dp else 20.dp
+                    val dialogHeight = (maxHeight - margin * 2).coerceAtLeast(0.dp)
+                    // Landscape IMEs can leave little more than 100dp: share the fixed action row with the title.
+                    Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = margin), contentAlignment = Alignment.Center) {
+                        Surface(Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = dialogHeight)
+                            .testTag("course_editor").onGloballyPositioned { surfaceBounds = it.boundsInRoot() },
+                            shape = RoundedCornerShape(24.dp), color = gxz.glassStrong) {
+                            Column {
+                                if (!compact) {
+                                    Text(title, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp).testTag("course_editor_title"),
+                                        style = typography.headlineSmall, color = gxz.ink)
+                                    HorizontalDivider(color = gxz.hairline)
+                                }
+                                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
+                                    .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = if (compact) 4.dp else 20.dp)
+                                    .testTag("course_editor_body"), verticalArrangement = Arrangement.spacedBy(24.dp), content = content)
                                 HorizontalDivider(color = gxz.hairline)
-                            }
-                            Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
-                                .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = if (compact) 4.dp else 20.dp)
-                                .testTag("course_editor_body"), verticalArrangement = Arrangement.spacedBy(24.dp), content = content)
-                            HorizontalDivider(color = gxz.hairline)
-                            Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 12.dp else 20.dp,
-                                vertical = if (compact) 2.dp else 14.dp).testTag("course_editor_actions"),
-                                horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                if (compact) Text(title, Modifier.weight(1f).testTag("course_editor_title"),
-                                    style = typography.titleMedium, color = gxz.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                TextButton(onClick = onDismiss, enabled = !saving,
-                                    modifier = (if (compact) Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp)
-                                        else Modifier.weight(1f).heightIn(min = 50.dp)).testTag("cancel_course"),
-                                    contentPadding = if (compact) PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                        else ButtonDefaults.TextButtonContentPadding,
-                                    colors = ButtonDefaults.textButtonColors(contentColor = gxz.inkSoft)) { Text("取消") }
-                                Button(onClick = onSave, enabled = valid && !saving,
-                                    modifier = (if (compact) Modifier.widthIn(min = 72.dp).heightIn(min = 48.dp)
-                                        else Modifier.weight(1.5f).heightIn(min = 50.dp)).testTag("save_course"), shape = EditorOptionShape,
-                                    contentPadding = if (compact) PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                        else ButtonDefaults.ContentPadding,
-                                    colors = ButtonDefaults.buttonColors(containerColor = gxz.ink, contentColor = gxz.onInk)) {
-                                    Text(if (saving) "保存中" else "保存", style = typography.labelLarge)
+                                Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 12.dp else 20.dp,
+                                    vertical = if (compact) 2.dp else 14.dp).testTag("course_editor_actions"),
+                                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    if (compact) Text(title, Modifier.weight(1f).testTag("course_editor_title"),
+                                        style = typography.titleMedium, color = gxz.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    TextButton(onClick = onDismiss, enabled = !saving,
+                                        modifier = (if (compact) Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp)
+                                            else Modifier.weight(1f).heightIn(min = 50.dp)).testTag("cancel_course"),
+                                        contentPadding = if (compact) PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                            else ButtonDefaults.TextButtonContentPadding,
+                                        colors = ButtonDefaults.textButtonColors(contentColor = gxz.inkSoft)) { Text("取消") }
+                                    Button(onClick = onSave, enabled = valid && !saving,
+                                        modifier = (if (compact) Modifier.widthIn(min = 72.dp).heightIn(min = 48.dp)
+                                            else Modifier.weight(1.5f).heightIn(min = 50.dp)).testTag("save_course"), shape = EditorOptionShape,
+                                        contentPadding = if (compact) PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                            else ButtonDefaults.ContentPadding,
+                                        colors = ButtonDefaults.buttonColors(containerColor = gxz.ink, contentColor = gxz.onInk)) {
+                                        Text(if (saving) "保存中" else "保存", style = typography.labelLarge)
+                                    }
                                 }
                             }
                         }
@@ -366,21 +404,23 @@ private fun EditorError(text: String, modifier: Modifier = Modifier) {
 private fun CourseDeleteDialog(context: CourseEditContext, sources: List<Int>, saving: Boolean, error: String?,
     onDismiss: () -> Unit, onSources: (List<Int>) -> Unit, onSave: () -> Unit) {
     val course = context.course
+    val arrangements = courseDeletionArrangements(context, sources)
     AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, modifier = Modifier.testTag("course_editor"),
+        properties = DialogProperties(dismissOnBackPress = !saving, dismissOnClickOutside = !saving),
         title = { Text("删除课程") }, text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("删除“${course?.name}”的以下安排？")
-                Text("周" + listOf("一", "二", "三", "四", "五", "六", "日")[context.defaultWeekday - 1] + " · " +
-                    course?.lessons.orEmpty().joinToString("、") + " 节", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-                Text("原安排范围", style = MaterialTheme.typography.titleSmall)
+                Text(courseDeletionSummary(arrangements), Modifier.testTag("course_delete_summary"),
+                    style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
+                Text("删除周次", style = MaterialTheme.typography.titleSmall)
                 DeleteWeekChoices(context.availableWeeks, sources, !saving, "source_week", onSources)
                 if (course?.source == CourseSource.SCHOOL) Text("完整刷新后以学校新课表为准",
                     style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
                 error?.let { EditorError(it) }
             }
         }, confirmButton = {
-            TextButton(onClick = onSave, enabled = sources.isNotEmpty() && !saving, modifier = Modifier.testTag("save_course")) {
-                Text(if (saving) "正在保存" else "确认删除")
+            TextButton(onClick = onSave, enabled = arrangements.isNotEmpty() && !saving, modifier = Modifier.testTag("save_course")) {
+                Text(if (saving) "正在保存" else "删除这 ${arrangements.size} 次安排")
             }
         }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } })
 }

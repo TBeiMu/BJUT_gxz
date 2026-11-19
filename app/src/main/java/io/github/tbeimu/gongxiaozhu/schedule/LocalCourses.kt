@@ -142,9 +142,16 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
             "原有第 13 节及以后的安排只能保留在原周次和星期")
         check(context.creatingTerm || (draft.firstMonday == context.firstMonday && draft.weekCount == context.weekCount), "学期已变化，请重新编辑")
     }
+    // Preserve source metadata and list order when saving an unchanged occurrence range.
+    val unchanged = source != null && !context.deleteOnly && draft.name.trim() == source.name.trim() &&
+        draft.location.trim() == source.location.trim() && draft.teacher.trim() == source.teacher.trim() &&
+        draft.weekdays == listOf(context.defaultWeekday) &&
+        draft.lessons.sorted() == source.lessons.distinct().sorted() &&
+        draft.sourceWeeks.toSet() == draft.targetWeeks.toSet()
     if (source?.source == CourseSource.SCHOOL) {
         val school = complete ?: throw CourseValidationException("学校课表已变化，请重新编辑")
         check(draft.weekCount == school.term.weekCount, "学校学期已变化，请重新编辑")
+        if (unchanged) return this
         val monday = LocalDate.parse(school.weeks.first().dates.first())
         val weeks = school.weeks.map { w ->
             val retained = w.courses.filterNot { w.number in draft.sourceWeeks && it.sameSeries(source) }
@@ -171,6 +178,7 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     } else check(draft.weekCount == local.weekCount && draft.firstMonday == local.firstMonday, "学期已变化，请重新编辑")
     val old = local.courses.find { it.id == source?.id }
     check(source == null || old != null, "本地课程已变化，请重新编辑")
+    if (unchanged) return this
     val retained = old?.occurrences.orEmpty().filterNot { o -> o.week in draft.sourceWeeks &&
         o.weekday == context.defaultWeekday && o.lessons == source?.lessons }
     val remaining = local.courses.filterNot { it.id == old?.id } + if (retained.isNotEmpty()) listOf(old!!.copy(occurrences = retained)) else emptyList()

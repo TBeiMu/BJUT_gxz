@@ -3,14 +3,22 @@ package io.github.tbeimu.gongxiaozhu.schedule
 import io.github.tbeimu.gongxiaozhu.data.VaultCipher
 import io.github.tbeimu.gongxiaozhu.data.VaultStore
 import kotlinx.serialization.json.Json
+import java.util.UUID
+
+/** A short-lived action identifier; course snapshots stay private to the repository. */
+data class CourseUndo(val token: String, val deleted: Boolean, val deletedCount: Int = 0)
+internal data class CourseEditResult(val data: ScheduleData, val undo: CourseUndo?)
 
 /** Only normalized course data is serialized. No login page, credential or cookie can enter this type. */
 class ScheduleRepository(private val store: VaultStore, private val cipher: VaultCipher) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var current: ScheduleData? = null
     private var exists = false
+    private data class UndoEntry(val action: CourseUndo, val before: ScheduleData, val after: ScheduleData)
+    private var courseUndo: UndoEntry? = null
 
     @Synchronized fun load(): ScheduleData = storage {
+        courseUndo = null
         current = null
         val bytes = store.read()
         exists = bytes != null
@@ -60,7 +68,34 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
         return if (data.pending == null) data else persist(data.copy(pending = null))
     }
 
-    @Synchronized fun edit(context: CourseEditContext, draft: CourseDraft): ScheduleData = persist(requireLoaded().editCourse(context, draft))
+    @Synchronized fun edit(context: CourseEditContext, draft: CourseDraft): ScheduleData {
+        val before = requireLoaded()
+        val after = before.editCourse(context, draft)
+        return if (before == after) { courseUndo = null; before } else persist(after)
+    }
+    @Synchronized internal fun editWithUndo(context: CourseEditContext, draft: CourseDraft): CourseEditResult {
+        val before = requireLoaded()
+        val edited = before.editCourse(context, draft)
+        if (before == edited) {
+            courseUndo = null
+            return CourseEditResult(before, null)
+        }
+        val after = persist(edited)
+        val action = if (context.course != null)
+            CourseUndo(UUID.randomUUID().toString(), context.deleteOnly,
+                if (context.deleteOnly) draft.sourceWeeks.distinct().size else 0) else null
+        courseUndo = action?.let { UndoEntry(it, before, after) }
+        return CourseEditResult(after, action)
+    }
+    @Synchronized fun undo(token: String): ScheduleData {
+        val saved = courseUndo?.takeIf { it.action.token == token && it.after == current }
+            ?: throw CourseValidationException("课表已变化，无法撤销此次操作")
+        // persist verifies the encrypted file again before replacing it; failed writes retain this action.
+        return persist(saved.before)
+    }
+    @Synchronized fun dismissCourseUndo(token: String? = null) {
+        if (token == null || courseUndo?.action?.token == token) courseUndo = null
+    }
     @Synchronized fun selectLocalTerm(id: String?): ScheduleData {
         val data = requireLoaded()
         if (id != null && data.localTerms.none { it.id == id }) throw CourseValidationException("本地学期不存在")
@@ -74,6 +109,7 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
             selectedLocalTermId = data.selectedLocalTermId ?: data.localTerms.lastOrNull()?.id))
     }
     @Synchronized fun clear(): ScheduleData = storage {
+        courseUndo = null
         store.clear(); cipher.clearKey()
         exists = false
         ScheduleData().also { current = it }
@@ -94,7 +130,7 @@ class ScheduleRepository(private val store: VaultStore, private val cipher: Vaul
             require(plain.size <= 4 * 1024 * 1024)
             store.write(cipher.encrypt(plain, requireExistingKey = exists))
         } finally { plain.fill(0) }
-        exists = true; current = value; value
+        exists = true; current = value; courseUndo = null; value
     }
     private fun validate(data: ScheduleData) {
         require(data.schema == 1)

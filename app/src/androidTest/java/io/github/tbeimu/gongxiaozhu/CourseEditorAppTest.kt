@@ -30,6 +30,66 @@ class CourseEditorAppTest {
     }
     @get:Rule val rules: RuleChain = RuleChain.outerRule(fixture).around(compose)
     private fun model() = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
+    private fun seedCourse(): ScheduleData {
+        compose.waitUntil(5000) { !model().state.value.schedule.loading }
+        compose.runOnIdle { model().editCourse(week = 1, weekday = 1) }
+        compose.runOnIdle {
+            val context = model().state.value.courseEditor!!
+            model().saveCourse(CourseDraft("撤销测试课程", "虚构教室", "", listOf(1), emptyList(), listOf(1, 2),
+                listOf(9, 10, 11, 12), context.firstMonday, context.weekCount))
+        }
+        compose.waitUntil(5000) { model().state.value.courseEditor == null && !model().state.value.courseSaving }
+        assertNull(model().state.value.schedule.courseUndo)
+        return model().state.value.schedule.data
+    }
+
+    @Test fun editedAndDeletedCourseCanBeUndoneAfterRotation() {
+        val before = seedCourse()
+        val course = before.display()!!.weeks[0].courses.single()
+        compose.runOnIdle { model().editCourse(course, week = 1) }
+        compose.onNodeWithTag("course_name").performTextReplacement("课程新名称")
+        compose.onNodeWithTag("save_course").performClick()
+        compose.waitUntil(5000) { model().state.value.schedule.courseUndo != null }
+        compose.onNodeWithText("课程已更新").assertExists()
+        val token = model().state.value.schedule.courseUndo!!.token
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("课程已更新").assertExists()
+        assertEquals(token, model().state.value.schedule.courseUndo!!.token)
+        compose.onNodeWithText("撤销", substring = false).performClick()
+        compose.waitUntil(5000) { !model().state.value.courseSaving && model().state.value.schedule.data == before }
+        assertEquals(before, createScheduleRepository(compose.activity).load())
+        compose.runOnIdle { model().clearMessage(); model().editCourse(course, week = 1, deleteOnly = true) }
+        compose.onNodeWithTag("save_course").assertTextContains("删除这 1 次安排").performClick()
+        compose.waitUntil(5000) { model().state.value.schedule.courseUndo != null }
+        compose.onNodeWithText("已删除 1 次安排").assertExists()
+        compose.onNodeWithText("撤销", substring = false).performClick()
+        compose.waitUntil(5000) { !model().state.value.courseSaving && model().state.value.schedule.data == before }
+        assertEquals(before, createScheduleRepository(compose.activity).load())
+    }
+
+    @Test fun undoExpiresOnBackgroundAndOpeningTheNextEditor() {
+        val before = seedCourse()
+        val course = before.display()!!.weeks[0].courses.single()
+        compose.runOnIdle { model().editCourse(course, week = 1) }
+        compose.onNodeWithTag("course_name").performTextReplacement("课程新名称")
+        compose.onNodeWithTag("save_course").performClick()
+        compose.waitUntil(5000) { model().state.value.schedule.courseUndo != null }
+        compose.runOnIdle { model().editCourse(week = 1, weekday = 1) }
+        compose.onNodeWithText("撤销", substring = false).assertDoesNotExist()
+        assertNull(model().state.value.schedule.courseUndo)
+        compose.onNodeWithTag("cancel_course").performClick()
+        val current = model().state.value.schedule.data.display()!!.weeks[0].courses.single()
+        compose.runOnIdle { model().editCourse(current, week = 1) }
+        compose.onNodeWithTag("course_name").performTextReplacement("再次更名")
+        compose.onNodeWithTag("save_course").performClick()
+        compose.waitUntil(5000) { model().state.value.schedule.courseUndo != null }
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        compose.onNodeWithText("撤销", substring = false).assertDoesNotExist()
+        assertNull(model().state.value.schedule.courseUndo)
+        assertEquals("再次更名", model().state.value.schedule.data.localTerms.single().courses.single().name)
+    }
+
     @Test fun draftSurvivesActualRotationAndLocalCalendarIsManagedAfterSave() {
         compose.waitUntil(5000) { !model().state.value.schedule.loading }
         compose.onNodeWithTag("import_schedule").performClick()

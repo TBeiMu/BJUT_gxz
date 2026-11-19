@@ -153,6 +153,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
         state.message?.let { snackbar.showSnackbar(it); model.clearMessage() }
     }
     UpdateCheckFeedback(updateActions.repository, snackbar, updateUnobstructed && !updateDialogVisible, updateActions.releasePage)
+    CourseUndoFeedback(model, state.schedule.courseUndo.takeUnless { state.courseSaving }, snackbar)
     val nameFeedbackVisible = updateUnobstructed && !updateDialogVisible && !state.busy &&
         !state.loading && !state.storageBlocked
     LaunchedEffect(model, nameFeedbackVisible) {
@@ -225,7 +226,9 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
         { model.scheduleController.pause() }, model.scheduleController::unsupportedWebView) }
 
     state.editor?.let { draft ->
-        AccountEditor(draft, state.busy, state.editorError, onDismiss = model::closeEditor, onSave = model::saveAccount)
+        AccountEditor(draft, state.editorDraft ?: draft, state.busy, state.editorError, state.discardAccountChanges,
+            onChange = model::updateAccountDraft, onDismiss = model::requestCloseEditor,
+            onContinue = model::continueAccountEditing, onDiscard = model::closeEditor, onSave = model::saveAccount)
     }
     state.courseEditor?.let { CourseEditor(it, state.courseSaving, state.courseError, model::closeCourseEditor, model::saveCourse) }
     if (state.billing.offerWeb) {
@@ -398,11 +401,10 @@ internal fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, 
 }
 
 @Composable
-private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, onDismiss: () -> Unit, onSave: (AccountDraft) -> Unit) {
-    // Secrets stay in memory; never use rememberSaveable or SavedStateHandle for these fields.
-    var label by remember(draft.id) { mutableStateOf(draft.label) }
-    var username by remember(draft.id) { mutableStateOf(draft.username) }
-    var password by remember(draft.id) { mutableStateOf(draft.password) }
+private fun AccountEditor(original: AccountDraft, draft: AccountDraft, busy: Boolean, error: String?, discard: Boolean,
+    onChange: (AccountDraft) -> Unit, onDismiss: () -> Unit, onContinue: () -> Unit, onDiscard: () -> Unit,
+    onSave: (AccountDraft) -> Unit) {
+    // The ViewModel owns the in-memory draft; secrets never enter state restoration or files.
     var visible by remember { mutableStateOf(false) }
     val activityWindow = (LocalView.current.context as? android.app.Activity)?.window
     DisposableEffect(activityWindow) {
@@ -410,18 +412,23 @@ private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, on
         activityWindow?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onDispose { if (!wasSecure) activityWindow?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
+    if (discard) {
+        DiscardChangesDialog(onContinue, onDiscard, secure = true)
+        return
+    }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+        properties = DialogProperties(dismissOnClickOutside = !busy && !accountDraftChanged(original, draft),
+            dismissOnBackPress = !busy, securePolicy = SecureFlagPolicy.SecureOn),
         title = { Text(if (draft.id == null) "添加账号" else "编辑账号") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()).imePadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("备注（可选）") }, singleLine = true,
+                OutlinedTextField(value = draft.label, onValueChange = { onChange(draft.copy(label = it)) }, label = { Text("备注（可选）") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("account_label"), enabled = !busy, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
-                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("校园网账号") }, singleLine = true,
+                OutlinedTextField(value = draft.username, onValueChange = { onChange(draft.copy(username = it)) }, label = { Text("校园网账号") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("account_username"), enabled = !busy,
                     keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next))
-                OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("密码") }, singleLine = true,
+                OutlinedTextField(value = draft.password, onValueChange = { onChange(draft.copy(password = it)) }, label = { Text("密码") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("account_password"), enabled = !busy,
                     visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
@@ -432,8 +439,8 @@ private fun AccountEditor(draft: AccountDraft, busy: Boolean, error: String?, on
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = { TextButton(enabled = !busy && username.isNotBlank() && password.isNotEmpty(),
-            onClick = { onSave(AccountDraft(draft.id, label, username, password)) }) {
+        confirmButton = { TextButton(enabled = !busy && accountDraftCanSave(original, draft),
+            onClick = { onSave(draft) }) {
             if (busy) BrandLoader(Modifier.size(22.dp)) else Text("保存")
         } },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } },

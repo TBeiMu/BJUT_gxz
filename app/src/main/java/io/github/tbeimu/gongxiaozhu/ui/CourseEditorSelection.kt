@@ -3,7 +3,51 @@ package io.github.tbeimu.gongxiaozhu.ui
 import androidx.compose.runtime.saveable.mapSaver
 import io.github.tbeimu.gongxiaozhu.schedule.CourseEditContext
 import io.github.tbeimu.gongxiaozhu.schedule.CourseOriginalArrangement
+import io.github.tbeimu.gongxiaozhu.schedule.CourseDraft
+import io.github.tbeimu.gongxiaozhu.schedule.CourseSource
 import io.github.tbeimu.gongxiaozhu.schedule.bjutLessonTime
+import java.time.LocalDate
+
+internal fun initialCourseDraft(context: CourseEditContext): CourseDraft {
+    val weeks = CourseWeekSelection.initial(context)
+    return CourseDraft(context.course?.name.orEmpty(), context.course?.location.orEmpty(),
+        context.course?.teacher.orEmpty(), listOf(context.defaultWeekday), weeks.sourceWeeks, weeks.targetWeeks,
+        context.course?.lessons ?: listOf(1, 2), context.firstMonday, context.weekCount)
+}
+
+/** Compare saved values rather than touched flags, focus, or a pending range anchor. */
+internal fun courseDraftHasChanges(context: CourseEditContext, draft: CourseDraft): Boolean {
+    fun CourseDraft.normalized() = copy(name = name.trim(), location = location.trim(), teacher = teacher.trim(),
+        weekdays = weekdays.distinct().sorted(), sourceWeeks = sourceWeeks.distinct().sorted(),
+        targetWeeks = targetWeeks.distinct().sorted(), lessons = lessons.distinct().sorted(),
+        firstMonday = runCatching { LocalDate.parse(firstMonday).toString() }.getOrDefault(firstMonday))
+    return draft.normalized() != initialCourseDraft(context).normalized()
+}
+
+/** Count precisely the series removed by the repository, not every arrangement with the same ID. */
+internal fun courseDeletionArrangements(context: CourseEditContext, sourceWeeks: List<Int>): List<CourseOriginalArrangement> {
+    val source = context.course ?: return emptyList()
+    val selected = sourceWeeks.toSet()
+    val arrangements = if (source.source == CourseSource.SCHOOL) {
+        context.expected.complete?.weeks.orEmpty().filter { it.number in selected }.flatMap { week ->
+            week.courses.filter { course ->
+                course.source == source.source && course.id == source.id && course.name == source.name &&
+                    course.location == source.location && course.teacher == source.teacher && course.lessons == source.lessons &&
+                    LocalDate.parse(course.date).dayOfWeek == LocalDate.parse(source.date).dayOfWeek
+            }.map { CourseOriginalArrangement(week.number, LocalDate.parse(it.date).dayOfWeek.value, it.lessons.distinct().sorted()) }
+        }
+    } else {
+        context.expected.localTerms.find { it.id == context.localTermId }?.courses?.find { it.id == source.id }
+            ?.occurrences.orEmpty().filter { it.week in selected && it.weekday == context.defaultWeekday && it.lessons == source.lessons }
+            .map { CourseOriginalArrangement(it.week, it.weekday, it.lessons.distinct().sorted()) }
+    }
+    return arrangements.distinct().sortedWith(compareBy({ it.week }, { it.weekday }, { it.lessons.firstOrNull() ?: 0 }))
+}
+
+internal fun courseDeletionSummary(arrangements: List<CourseOriginalArrangement>): String {
+    if (arrangements.isEmpty()) return "未选择要删除的安排"
+    return courseArrangementSummary(arrangements) + "，共 ${arrangements.distinct().size} 次安排"
+}
 
 /** A first tap is already a valid single lesson; the second closes the inclusive range. */
 internal data class CourseLessonSelection(
@@ -121,11 +165,15 @@ internal fun courseLessonSummary(lessons: List<Int>): String =
     if (lessons.isEmpty()) "未选择节次" else "第 " + numberRanges(lessons).joinToString("、") + " 节"
 
 internal fun courseOriginalScheduleSummary(arrangements: List<CourseOriginalArrangement>): String {
+    return "原有安排：" + courseArrangementSummary(arrangements)
+}
+
+private fun courseArrangementSummary(arrangements: List<CourseOriginalArrangement>): String {
     val grouped = arrangements.groupBy { it.weekday to it.lessons.distinct().sorted() }
         .map { (key, values) -> key to values.map { it.week }.distinct().sorted() }
         .sortedWith(compareBy({ it.first.first }, { it.first.second.firstOrNull() ?: 0 }))
     val days = listOf("一", "二", "三", "四", "五", "六", "日")
-    return "原有安排：" + grouped.joinToString("；") { (key, weeks) ->
+    return grouped.joinToString("；") { (key, weeks) ->
         "第 " + numberRanges(weeks).joinToString("、") + " 周 · 周" + days[key.first - 1] + " · " + courseLessonSummary(key.second)
     }
 }
