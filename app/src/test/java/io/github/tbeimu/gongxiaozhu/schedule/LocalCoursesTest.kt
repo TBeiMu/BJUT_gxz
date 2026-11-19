@@ -84,9 +84,51 @@ class LocalCoursesTest {
         repo.append(targetWeek.copy(courses = listOf(source.copy(date = targetWeek.dates[2]))))
         val data = repo.finish(1)
         val context = data.courseEditor(source)
-        val result = repo.edit(context, draft(context, target = listOf(2), day = 3)).complete!!
+        val result = repo.edit(context, draft(context, source.name, target = listOf(2), day = 3, lessons = source.lessons)
+            .copy(location = source.location, teacher = source.teacher)).complete!!
         assertTrue(result.weeks[0].courses.isEmpty())
         assertEquals(1, result.weeks[1].courses.count { it.id == source.id && it.date == targetWeek.dates[2] && it.lessons == source.lessons })
+    }
+    @Test fun schoolMoveWithChangedMetadataPreservesTheEditedTargetAndExistingArrangement() {
+        for (field in listOf("name", "location", "teacher")) {
+            val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+            repo.begin(demoIdentity, demoTerm)
+            val source = demoWeek(1).courses.single()
+            val targetWeek = demoWeek(2)
+            val existing = source.copy(date = targetWeek.dates[2])
+            repo.append(demoWeek(1)); repo.append(targetWeek.copy(courses = listOf(existing)))
+            val before = repo.finish(1)
+            val context = before.courseEditor(source)
+            val moved = draft(context, source.name, source = context.availableWeeks, target = listOf(2), day = 3, lessons = source.lessons)
+                .copy(location = source.location, teacher = source.teacher)
+            val changed = when (field) {
+                "name" -> moved.copy(name = "调整后的课程")
+                "location" -> moved.copy(location = "调整后的教室")
+                else -> moved.copy(teacher = "调整后的教师")
+            }
+            val edited = repo.editWithUndo(context, changed)
+            val result = edited.data
+            assertTrue(result.complete!!.weeks[0].courses.isEmpty())
+            val targets = result.complete.weeks[1].courses
+            assertEquals("changed $field must not disappear", 2, targets.size)
+            assertTrue(targets.contains(existing))
+            assertTrue(targets.any { it.name == changed.name && it.location == changed.location && it.teacher == changed.teacher })
+            assertEquals(result, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+            assertEquals(before, repo.undo(edited.undo!!.token))
+            assertEquals(before, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+        }
+    }
+    @Test fun schoolMoveKeepsAnotherSeriesWithTheSameIdAtTheTarget() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm)
+        val source = demoWeek(1).courses.single()
+        val targetWeek = demoWeek(2)
+        val otherSeries = source.copy(name = "同编号的另一门课程", date = targetWeek.dates[2])
+        repo.append(demoWeek(1)); repo.append(targetWeek.copy(courses = listOf(otherSeries)))
+        val context = repo.finish(1).courseEditor(source)
+        val result = repo.edit(context, draft(context, source.name, source = context.availableWeeks,
+            target = listOf(2), day = 3, lessons = source.lessons).copy(location = source.location, teacher = source.teacher))
+        assertEquals(setOf(source.name, otherSeries.name), result.complete!!.weeks[1].courses.map { it.name }.toSet())
+        assertTrue(result.complete.weeks[1].courses.contains(otherSeries))
     }
     @Test fun editorContextListsEveryOriginalWeekAndLessonPattern() {
         val repo = repository(); repo.begin(demoIdentity, demoTerm)
@@ -293,6 +335,34 @@ class LocalCoursesTest {
         val delete = changed.courseEditor(changed.display()!!.weeks[0].courses.first(), deleteOnly = true)
         val deleted = repo.edit(delete, draft(delete))
         assertEquals(listOf(1 to 3, 1 to 5, 2 to 1, 2 to 3), deleted.localTerms.single().courses.single().occurrences.map { it.week to it.weekday })
+    }
+    @Test fun customMoveWithChangedMetadataPreservesTheEditedTargetAndExistingArrangement() {
+        for (field in listOf("name", "location", "teacher")) {
+            val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+            val adding = repo.snapshot().courseEditor()
+            repo.edit(adding, draft(adding, target = listOf(1, 2), day = 1).copy(weekdays = listOf(1, 3)))
+            val before = repo.snapshot()
+            val original = before.localTerms.single().courses.single()
+            val context = before.courseEditor(before.display()!!.weeks[0].courses.first { LocalDate.parse(it.date).dayOfWeek.value == 1 })
+            val moved = draft(context, original.name, source = context.availableWeeks, target = listOf(1, 2), day = 3)
+                .copy(location = original.location, teacher = original.teacher)
+            val changed = when (field) {
+                "name" -> moved.copy(name = "调整后的课程")
+                "location" -> moved.copy(location = "调整后的教室")
+                else -> moved.copy(teacher = "调整后的教师")
+            }
+            val edited = repo.editWithUndo(context, changed)
+            val result = edited.data
+            val courses = result.localTerms.single().courses
+            assertEquals("changed $field must not disappear", 2, courses.size)
+            assertEquals(original.copy(occurrences = original.occurrences.filter { it.weekday == 3 }), courses.single { it.id == original.id })
+            val adjusted = courses.single { it.id != original.id }
+            assertEquals(changed.name, adjusted.name); assertEquals(changed.location, adjusted.location); assertEquals(changed.teacher, adjusted.teacher)
+            assertEquals(listOf(1, 2).map { CustomOccurrence(it, 3, original.occurrences.first().lessons) }, adjusted.occurrences)
+            assertEquals(result, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+            assertEquals(before, repo.undo(edited.undo!!.token))
+            assertEquals(before, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+        }
     }
     @Test fun emptyInvalidOrDuplicateWeekdaysAreRejectedBeforeWriting() {
         val repo = repository(); val context = repo.snapshot().courseEditor()

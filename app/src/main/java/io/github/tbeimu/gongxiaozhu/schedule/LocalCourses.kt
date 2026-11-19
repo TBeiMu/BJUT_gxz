@@ -68,6 +68,7 @@ private fun ScheduleCourse.sameSeries(other: ScheduleCourse): Boolean = source =
     LocalDate.parse(date).dayOfWeek == LocalDate.parse(other.date).dayOfWeek
 
 private fun ScheduleCourse.sameOccurrence(other: ScheduleCourse): Boolean = source == other.source && id == other.id &&
+    name == other.name && location == other.location && teacher == other.teacher &&
     date == other.date && lessons.distinct().sorted() == other.lessons.distinct().sorted()
 
 fun ScheduleData.courseEditor(course: ScheduleCourse? = null, week: Int = 1, weekday: Int = scheduleToday().dayOfWeek.value,
@@ -191,7 +192,8 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     // A partial edit can add a second interval on an existing day. Keep each record bounded;
     // when it no longer fits, preserve the original ID and store only new targets separately.
     val retainedSet = retained.toSet()
-    val newOccurrences = added.filterNot { it in retainedSet }
+    // Matching times only describe a duplicate while the course content is unchanged.
+    val newOccurrences = if (sameContent) added.filterNot { it in retainedSet } else added
     val courses = if (!context.deleteOnly && sameContent && merged.size <= MAX_CUSTOM_OCCURRENCES)
         local.courses.filterNot { it.id == old!!.id } + old!!.copy(occurrences = merged)
     else remaining + if (context.deleteOnly || newOccurrences.isEmpty()) emptyList() else listOf(CustomCourse(

@@ -254,6 +254,8 @@ internal fun todayStatus(week: ScheduleWeek, today: LocalDate, now: LocalTime): 
         }
         if (now < end) return DayStatus("上课中 · 还剩 ${java.time.Duration.between(now, end).toMinutes()} 分钟 · $what", DayState.IN_CLASS)
     }
+    // Imported lessons after 12 have no supplied clock time, so their completion is unknown.
+    if (blocks.any { lessonSpan(it.first, it.last) == null }) return null
     return DayStatus("今天的课都上完了", DayState.QUIET)
 }
 
