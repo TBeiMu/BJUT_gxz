@@ -1,16 +1,38 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import java.time.LocalDate
 
@@ -23,25 +45,35 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var name by rememberSaveable(context.token) { mutableStateOf(course?.name.orEmpty()) }
     var location by rememberSaveable(context.token) { mutableStateOf(course?.location.orEmpty()) }
     var teacher by rememberSaveable(context.token) { mutableStateOf(course?.teacher.orEmpty()) }
+    var nameTouched by rememberSaveable(context.token) { mutableStateOf(false) }
     var weekdays by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeekday)) }
-    var sources by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeek)) }
-    var targets by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeek).filter { it <= context.weekCount }) }
-    var first by rememberSaveable(context.token) { mutableStateOf((course?.lessons?.minOrNull() ?: 1).toString()) }
-    var last by rememberSaveable(context.token) { mutableStateOf((course?.lessons?.maxOrNull() ?: 2).toString()) }
-    var rangeChanged by rememberSaveable(context.token) { mutableStateOf(false) }
+    var selectedWeeks by rememberSaveable(context.token, stateSaver = CourseWeekSelection.Saver) {
+        mutableStateOf(CourseWeekSelection(listOf(context.defaultWeek), listOf(context.defaultWeek).filter { it <= context.weekCount }))
+    }
+    var selectedLessons by rememberSaveable(context.token, stateSaver = CourseLessonSelection.Saver) {
+        mutableStateOf(CourseLessonSelection(course?.lessons ?: listOf(1, 2)))
+    }
     var monday by rememberSaveable(context.token) { mutableStateOf(context.firstMonday) }
     var count by rememberSaveable(context.token) { mutableStateOf(context.weekCount.toString()) }
-    var picker by remember { mutableStateOf(false) }
+    var countFocused by rememberSaveable(context.token) { mutableStateOf(false) }
+    var picker by rememberSaveable(context.token) { mutableStateOf(false) }
     val newTerm = context.creatingTerm
-    val weeks = (count.toIntOrNull() ?: 0).coerceIn(0, 60)
-    val lessonStart = first.toIntOrNull()
-    val lessonEnd = last.toIntOrNull()
-    val validLessons = lessonStart != null && lessonEnd != null && lessonStart in 1..20 && lessonEnd in lessonStart..20
-    val valid = if (context.deleteOnly) sources.isNotEmpty() else name.isNotBlank() && count.toIntOrNull() in 1..60 &&
-        weekdays.isNotEmpty() && targets.isNotEmpty() && targets.all { it in 1..weeks } && (validLessons || (course != null && !rangeChanged)) &&
+    val weeks = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
+    val validSources = course == null || (selectedWeeks.sourceWeeks.isNotEmpty() &&
+        selectedWeeks.sourceWeeks.all { it in context.availableWeeks })
+    val valid = validSources && name.isNotBlank() && weeks > 0 && weekdays.isNotEmpty() &&
+        selectedWeeks.targetWeeks.isNotEmpty() && selectedWeeks.targetWeeks.all { it in 1..weeks } &&
+        selectedLessons.lessons.isNotEmpty() &&
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
-    fun draft() = CourseDraft(name, location, teacher, weekdays, sources, targets,
-        if (course != null && !rangeChanged) course.lessons else if (validLessons) (lessonStart!!..lessonEnd!!).toList() else emptyList(), monday, weeks)
+    fun draft() = CourseDraft(name, location, teacher, weekdays, selectedWeeks.sourceWeeks,
+        selectedWeeks.targetWeeks, selectedLessons.lessons, monday, weeks)
+    fun confirmWeekCount() { selectedWeeks = selectedWeeks.fitTerm(count.toIntOrNull() ?: 0) }
+
+    if (context.deleteOnly) {
+        CourseDeleteDialog(context, selectedWeeks.sourceWeeks, saving, error, onDismiss,
+            { selectedWeeks = selectedWeeks.withSources(it, weeks) }, { onSave(draft()) })
+        return
+    }
 
     if (picker) {
         val dateState = rememberDatePickerState(initialSelectedDateMillis = LocalDate.parse(monday).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
@@ -53,67 +85,257 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         }, dismissButton = { TextButton(onClick = { picker = false }) { Text("取消") } }) { DatePicker(dateState) }
         return
     }
-    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, modifier = Modifier.testTag("course_editor"),
-        title = { Text(if (context.deleteOnly) "删除课程" else if (course == null) "添加自定义课程" else "编辑课程") },
-        text = {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (context.deleteOnly) Text("删除“${course?.name}”的以下安排？")
-                if (course != null) {
-                    Text("周${listOf("一", "二", "三", "四", "五", "六", "日")[context.defaultWeekday - 1]} · ${course.lessons.joinToString("、")} 节",
-                        style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-                    Text("原安排范围", style = MaterialTheme.typography.titleSmall)
-                    WeekChoices(context.availableWeeks, sources, !saving, "source_week") { sources = it }
+
+    CourseEditorDialog(if (course == null) "添加自定义课程" else "编辑课程", saving, valid,
+        onDismiss, { onSave(draft()) }) {
+        val focus = LocalFocusManager.current
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            CourseField(name, {
+                name = it.take(300); nameTouched = true
+            }, "课程名", "course_name", !saving, isError = nameTouched && name.isBlank(),
+                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }))
+            if (nameTouched && name.isBlank()) EditorError("请填写课程名")
+            CourseField(location, { location = it.take(500) }, "教室（可选）", "course_location", !saving,
+                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }))
+            CourseField(teacher, { teacher = it.take(500) }, "教师（可选）", "course_teacher", !saving,
+                imeAction = ImeAction.Done, keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }))
+        }
+        if (newTerm) {
+            EditorSection("学期设置") {
+                OutlinedButton(onClick = { focus.clearFocus(); picker = true }, enabled = !saving,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("term_monday"),
+                    shape = EditorOptionShape, border = androidx.compose.foundation.BorderStroke(1.dp, gxz.hairline),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = gxz.ink)) {
+                    Text("第一周周一 · $monday", style = MaterialTheme.typography.bodyMedium)
                 }
-                if (course == null && !newTerm) Text("${context.firstMonday} 起 · ${context.weekCount} 周",
-                    style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-                if (!context.deleteOnly) {
-                    OutlinedTextField(name, { name = it.take(300) }, label = { Text("课程名") }, singleLine = true,
-                        enabled = !saving, modifier = Modifier.fillMaxWidth().testTag("course_name"), shape = TileShape)
-                    OutlinedTextField(location, { location = it.take(500) }, label = { Text("教室（可选）") }, singleLine = true,
-                        enabled = !saving, modifier = Modifier.fillMaxWidth().testTag("course_location"), shape = TileShape)
-                    OutlinedTextField(teacher, { teacher = it.take(500) }, label = { Text("教师（可选）") }, singleLine = true,
-                        enabled = !saving, modifier = Modifier.fillMaxWidth().testTag("course_teacher"), shape = TileShape)
-                    if (newTerm) {
-                        OutlinedButton(onClick = { picker = true }, enabled = !saving, modifier = Modifier.testTag("term_monday")) { Text("第一周周一 · $monday") }
-                        OutlinedTextField(count, { count = it.filter(Char::isDigit).take(2) }, label = { Text("学期周数（1–60）") },
-                            singleLine = true, enabled = !saving, modifier = Modifier.fillMaxWidth().testTag("term_weeks"), shape = TileShape,
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                    }
-                    Text(if (course == null) "上课安排" else "调整后的安排", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日").forEachIndexed { index, label ->
-                            val day = index + 1
-                            FilterChip(day in weekdays, {
-                                weekdays = if (course?.source == CourseSource.SCHOOL) listOf(day)
-                                else if (day in weekdays) weekdays - day else (weekdays + day).sorted()
-                            }, { Text(label) }, enabled = !saving,
-                                modifier = Modifier.testTag("course_day_${index + 1}"))
-                        }
-                    }
-                    WeekChoices((1..weeks).toList(), targets, !saving, "target_week") { targets = it }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(first, { first = it.filter(Char::isDigit).take(2); rangeChanged = true }, label = { Text("开始节次") },
-                            enabled = !saving, singleLine = true, shape = TileShape, modifier = Modifier.weight(1f).testTag("course_first"),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                        OutlinedTextField(last, { last = it.filter(Char::isDigit).take(2); rangeChanged = true }, label = { Text("结束节次") },
-                            enabled = !saving, singleLine = true, shape = TileShape, modifier = Modifier.weight(1f).testTag("course_last"),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                    }
-                    if (course != null && !rangeChanged && course.lessons.zipWithNext().any { (a, b) -> b != a + 1 })
-                        Text("原节次 ${course.lessons.joinToString("、")}，未修改区间时保留", style = MaterialTheme.typography.bodySmall)
-                    if (!validLessons && rangeChanged) Text("节次须为 1–20，结束不得早于开始", color = MaterialTheme.colorScheme.error)
-                }
-                if (course?.source == CourseSource.SCHOOL) Text("完整刷新后以学校新课表为准", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                CourseField(count, {
+                    count = it.filter(Char::isDigit).take(2)
+                }, "学期周数（1–60）", "term_weeks", !saving, isError = weeks == 0,
+                    keyboardType = KeyboardType.Number, imeAction = ImeAction.Done,
+                    keyboardActions = KeyboardActions(onDone = { confirmWeekCount(); focus.clearFocus() }),
+                    onFocusChange = {
+                        if (countFocused && !it) confirmWeekCount()
+                        countFocused = it
+                    })
+                if (weeks == 0) EditorError("学期周数须为 1–60")
             }
-        }, confirmButton = { TextButton(onClick = { onSave(draft()) }, enabled = valid && !saving,
-            modifier = Modifier.testTag("save_course")) { Text(if (saving) "正在保存" else if (context.deleteOnly) "确认删除" else "保存") } },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } })
+        } else {
+            Text("${context.firstMonday} 起 · ${context.weekCount} 周", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+        }
+        EditorSection("星期", if (course?.source == CourseSource.SCHOOL) "单选" else "可多选") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日").forEachIndexed { index, label ->
+                    val day = index + 1
+                    EditorChoice(label, day in weekdays, !saving, "course_day_$day",
+                        role = if (course?.source == CourseSource.SCHOOL) Role.RadioButton else Role.Checkbox) {
+                        focus.clearFocus()
+                        weekdays = if (course?.source == CourseSource.SCHOOL) listOf(day)
+                        else if (day in weekdays) weekdays - day else (weekdays + day).sorted()
+                    }
+                }
+            }
+            if (weekdays.isEmpty()) EditorError("请至少选择一个星期")
+        }
+        EditorSection("节次", courseLessonSummary(selectedLessons.lessons)) {
+            courseLessonClock(selectedLessons.lessons)?.let {
+                Text(it, Modifier.testTag("course_lesson_clock"), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
+            }
+            val nonconsecutive = !selectedLessons.changed && selectedLessons.lessons.sorted().zipWithNext().any { (a, b) -> b != a + 1 }
+            Text(when {
+                nonconsecutive -> "保留原非连续节次，点选后改为连续区间"
+                selectedLessons.anchor != null -> "已选第 ${selectedLessons.anchor} 节，再点结束节次"
+                else -> "点起始、结束节次；只点一次可选单节"
+            }, Modifier.testTag("course_lesson_hint"), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..20).forEach { lesson ->
+                    EditorChoice("$lesson", lesson in selectedLessons.lessons, !saving, "course_lesson_$lesson",
+                        description = "第 $lesson 节") { focus.clearFocus(); selectedLessons = selectedLessons.select(lesson) }
+                }
+            }
+        }
+        if (course != null) {
+            EditorSection("原安排范围", "${selectedWeeks.sourceWeeks.size} 周") {
+                Text("周" + listOf("一", "二", "三", "四", "五", "六", "日")[context.defaultWeekday - 1] + " · " +
+                    courseLessonSummary(course.lessons), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+                EditorWeekChoices(context.availableWeeks, selectedWeeks.sourceWeeks, !saving, "source_week",
+                    onChange = { focus.clearFocus(); selectedWeeks = selectedWeeks.withSources(it, weeks) })
+                if (!validSources) EditorError("请选择要修改的原安排")
+            }
+        }
+        EditorSection(if (course == null) "上课周次" else "调整后的周次", "${selectedWeeks.targetWeeks.size} 周") {
+            if (weeks == 0) Text("请先设置有效学期周数", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+            else {
+                EditorWeekChoices((1..weeks).toList(), selectedWeeks.targetWeeks, !saving, "target_week",
+                    onChange = { focus.clearFocus(); selectedWeeks = selectedWeeks.withTargets(it) })
+                if (selectedWeeks.targetWeeks.isEmpty()) EditorError("请至少选择一个上课周次")
+            }
+        }
+        if (course?.source == CourseSource.SCHOOL) Text("完整刷新后以学校新课表为准",
+            style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+        error?.let { EditorError(it, Modifier.testTag("course_save_error")) }
+    }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+private val EditorOptionShape = RoundedCornerShape(12.dp)
+
+/** One scroll owner; the header and actions always fit the space above the IME and system bars. */
 @Composable
-private fun WeekChoices(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String, onChange: (List<Int>) -> Unit) {
+private fun CourseEditorDialog(title: String, saving: Boolean, valid: Boolean,
+    onDismiss: () -> Unit, onSave: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val density = LocalDensity.current
+    Dialog(onDismissRequest = { if (!saving) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
+            dismissOnBackPress = !saving, dismissOnClickOutside = !saving)) {
+        CompositionLocalProvider(LocalDensity provides density) {
+            BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding(),
+                contentAlignment = Alignment.Center) {
+                val typography = MaterialTheme.typography
+                val compact = maxHeight < with(density) {
+                    typography.headlineSmall.lineHeight.toDp() + typography.labelLarge.lineHeight.toDp()
+                } + 208.dp
+                val margin = if (compact) 4.dp else 20.dp
+                val dialogHeight = (maxHeight - margin * 2).coerceAtLeast(0.dp)
+                // Landscape IMEs can leave little more than 100dp: share the fixed action row with the title.
+                Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = margin), contentAlignment = Alignment.Center) {
+                    Surface(Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = dialogHeight)
+                        .testTag("course_editor"), shape = RoundedCornerShape(24.dp), color = gxz.glassStrong) {
+                        Column {
+                            if (!compact) {
+                                Text(title, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp).testTag("course_editor_title"),
+                                    style = typography.headlineSmall, color = gxz.ink)
+                                HorizontalDivider(color = gxz.hairline)
+                            }
+                            Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
+                                .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = if (compact) 4.dp else 20.dp)
+                                .testTag("course_editor_body"), verticalArrangement = Arrangement.spacedBy(24.dp), content = content)
+                            HorizontalDivider(color = gxz.hairline)
+                            Row(Modifier.fillMaxWidth().padding(horizontal = if (compact) 12.dp else 20.dp,
+                                vertical = if (compact) 2.dp else 14.dp).testTag("course_editor_actions"),
+                                horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                if (compact) Text(title, Modifier.weight(1f).testTag("course_editor_title"),
+                                    style = typography.titleMedium, color = gxz.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                TextButton(onClick = onDismiss, enabled = !saving,
+                                    modifier = (if (compact) Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp)
+                                        else Modifier.weight(1f).heightIn(min = 50.dp)).testTag("cancel_course"),
+                                    contentPadding = if (compact) PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        else ButtonDefaults.TextButtonContentPadding,
+                                    colors = ButtonDefaults.textButtonColors(contentColor = gxz.inkSoft)) { Text("取消") }
+                                Button(onClick = onSave, enabled = valid && !saving,
+                                    modifier = (if (compact) Modifier.widthIn(min = 72.dp).heightIn(min = 48.dp)
+                                        else Modifier.weight(1.5f).heightIn(min = 50.dp)).testTag("save_course"), shape = EditorOptionShape,
+                                    contentPadding = if (compact) PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                        else ButtonDefaults.ContentPadding,
+                                    colors = ButtonDefaults.buttonColors(containerColor = gxz.ink, contentColor = gxz.onInk)) {
+                                    Text(if (saving) "保存中" else "保存", style = typography.labelLarge)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CourseField(value: String, onChange: (String) -> Unit, label: String, tag: String, enabled: Boolean,
+    isError: Boolean = false, keyboardType: KeyboardType = KeyboardType.Text, imeAction: ImeAction = ImeAction.Next,
+    keyboardActions: KeyboardActions = KeyboardActions.Default, onFocusChange: (Boolean) -> Unit = {}) {
+    TextField(value, onChange, Modifier.fillMaxWidth().testTag(tag).onFocusChanged { onFocusChange(it.isFocused) },
+        enabled = enabled, singleLine = true,
+        label = { Text(label) }, shape = EditorOptionShape, isError = isError, textStyle = MaterialTheme.typography.bodyLarge,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction), keyboardActions = keyboardActions,
+        colors = TextFieldDefaults.colors(focusedContainerColor = gxz.well, unfocusedContainerColor = gxz.well,
+            disabledContainerColor = gxz.well, errorContainerColor = gxz.well,
+            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent, errorIndicatorColor = Color.Transparent,
+            focusedLabelColor = gxz.inkSoft, unfocusedLabelColor = gxz.inkSoft))
+}
+
+@Composable
+private fun EditorSection(title: String, detail: String? = null, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = gxz.ink)
+            detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft) }
+        }
+        content()
+    }
+}
+
+@Composable
+private fun EditorChoice(label: String, selected: Boolean, enabled: Boolean, tag: String,
+    role: Role = Role.Checkbox, description: String? = null, onClick: () -> Unit) {
+    val targetColor = if (selected) gxz.ink else gxz.well
+    val animatedColor by animateColorAsState(targetColor, tween(if (LocalReducedMotion.current) 0 else Motion.SHORT), label = "课程选项")
+    Box(Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp).testTag(tag).clip(EditorOptionShape)
+        .background(animatedColor.copy(alpha = if (enabled) animatedColor.alpha else animatedColor.alpha * .45f))
+        .selectable(selected, enabled = enabled, role = role, onClick = onClick)
+        .semantics {
+            description?.let { contentDescription = it }
+            if (role == Role.Checkbox) toggleableState = if (selected) ToggleableState.On else ToggleableState.Off
+        }
+        .padding(horizontal = 12.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
+        Text(label, style = MaterialTheme.typography.labelLarge,
+            color = (if (selected) gxz.onInk else gxz.inkSoft).copy(alpha = if (enabled) 1f else .45f))
+    }
+}
+
+@Composable
+private fun EditorWeekChoices(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String,
+    onChange: (List<Int>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(courseWeekSummary(selected), Modifier.testTag(tag + "_summary"), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CourseWeekPreset.entries.forEach { preset ->
+                val choice = preset.select(available)
+                EditorChoice(preset.label, (choice.isNotEmpty() || preset == CourseWeekPreset.CLEAR) && selected.toSet() == choice.toSet(),
+                    enabled && (choice.isNotEmpty() || preset == CourseWeekPreset.CLEAR), tag + "_" + preset.name.lowercase(),
+                    role = Role.Button) { onChange(choice) }
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            available.forEach { week ->
+                EditorChoice("$week", week in selected, enabled, tag + "_$week", description = "第 $week 周") {
+                    onChange(if (week in selected) selected - week else (selected + week).sorted())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorError(text: String, modifier: Modifier = Modifier) {
+    Text(text, modifier, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+}
+
+/** Deletion retains its original confirmation and single-occurrence defaults. */
+@Composable
+private fun CourseDeleteDialog(context: CourseEditContext, sources: List<Int>, saving: Boolean, error: String?,
+    onDismiss: () -> Unit, onSources: (List<Int>) -> Unit, onSave: () -> Unit) {
+    val course = context.course
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, modifier = Modifier.testTag("course_editor"),
+        title = { Text("删除课程") }, text = {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("删除“${course?.name}”的以下安排？")
+                Text("周" + listOf("一", "二", "三", "四", "五", "六", "日")[context.defaultWeekday - 1] + " · " +
+                    course?.lessons.orEmpty().joinToString("、") + " 节", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+                Text("原安排范围", style = MaterialTheme.typography.titleSmall)
+                DeleteWeekChoices(context.availableWeeks, sources, !saving, "source_week", onSources)
+                if (course?.source == CourseSource.SCHOOL) Text("完整刷新后以学校新课表为准",
+                    style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+                error?.let { EditorError(it) }
+            }
+        }, confirmButton = {
+            TextButton(onClick = onSave, enabled = sources.isNotEmpty() && !saving, modifier = Modifier.testTag("save_course")) {
+                Text(if (saving) "正在保存" else "确认删除")
+            }
+        }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } })
+}
+
+@Composable
+private fun DeleteWeekChoices(available: List<Int>, selected: List<Int>, enabled: Boolean, tag: String, onChange: (List<Int>) -> Unit) {
     Column {
         TextButton(onClick = { onChange(if (selected.toSet() == available.toSet()) emptyList() else available) }, enabled = enabled,
             modifier = Modifier.testTag("${tag}_all")) { Text(if (selected.toSet() == available.toSet()) "取消全选" else "全选周次") }

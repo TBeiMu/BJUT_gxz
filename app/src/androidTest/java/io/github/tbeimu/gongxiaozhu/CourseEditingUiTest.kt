@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.activity.ComponentActivity
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.schedule.*
@@ -135,7 +137,7 @@ class CourseEditingUiTest {
         assertTrue(data.value.complete!!.weeks[0].courses.isEmpty())
         assertEquals(1, data.value.complete!!.weeks[1].courses.size)
     }
-    @Test fun largeFontEditorKeepsSaveVisibleAndInvalidRangeDisabled() {
+    @Test fun largeFontEditorKeepsSaveVisibleAndAllowsReverseAndSingleLessonSelection() {
         val context = ScheduleData().courseEditor()
         compose.setContent { GongXiaoZhuTheme {
             val density = LocalDensity.current
@@ -145,10 +147,13 @@ class CourseEditingUiTest {
         } }
         compose.onNodeWithTag("course_name").performTextInput("大字课程")
         compose.onNodeWithTag("save_course").assertIsDisplayed()
-        compose.onNodeWithTag("course_first").performScrollTo().performTextReplacement("20")
-        compose.onNodeWithTag("course_last").performTextReplacement("1")
-        compose.onNodeWithTag("save_course").assertIsNotEnabled()
-        compose.onNodeWithTag("course_last").performTextReplacement("20")
+        compose.onNodeWithTag("course_lesson_20").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsEnabled()
+        compose.onNodeWithTag("course_lesson_1").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_10").assertIsSelected()
+        compose.onNodeWithTag("course_lesson_20").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_20").assertIsSelected()
+        compose.onNodeWithTag("course_lesson_1").assertIsNotSelected()
         compose.onNodeWithTag("save_course").assertIsEnabled()
         val selectedDay = context.defaultWeekday
         compose.onNodeWithTag("course_day_$selectedDay").performScrollTo().performClick()
@@ -160,6 +165,149 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("course_day_$secondDay").assertIsSelected()
         compose.onNodeWithTag("save_course").assertIsEnabled()
         capture("course_editor", "editor-large")
+    }
+    @Test fun weekPresetsAndTermShrinkKeepValidSelection() {
+        var saved: CourseDraft? = null
+        val edit = ScheduleData().courseEditor()
+        compose.setContent { GongXiaoZhuTheme {
+            CourseEditor(edit, false, null, {}, { saved = it })
+        } }
+        compose.onNodeWithTag("course_name").performTextInput("周次选择测试")
+        compose.onNodeWithTag("target_week_even").performScrollTo().performClick()
+        compose.onNodeWithTag("target_week_1").assertIsNotSelected()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
+        // A partially entered 30 must not discard selections above the intermediate digit 3.
+        compose.onNodeWithTag("term_weeks").performScrollTo().performTextReplacement("3")
+        compose.onNodeWithTag("term_weeks").performTextReplacement("30")
+        compose.onNodeWithTag("term_weeks").performImeAction()
+        compose.onNodeWithTag("target_week_20").assertIsSelected()
+        compose.onNodeWithTag("term_weeks").performScrollTo().performTextReplacement("3")
+        compose.onNodeWithTag("term_weeks").performImeAction()
+        compose.onNodeWithTag("target_week_4").assertDoesNotExist()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
+        compose.onNodeWithTag("save_course").assertIsEnabled()
+        compose.onNodeWithTag("target_week_clear").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithText("请至少选择一个上课周次").assertExists()
+        compose.onNodeWithTag("target_week_odd").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(1, 3), saved!!.targetWeeks)
+        assertEquals(3, saved!!.weekCount)
+    }
+    @Test fun editingSourceWeeksFollowsUntilExplicitTargetChange() {
+        var saved: CourseDraft? = null
+        val data = schoolData()
+        val edit = data.courseEditor(data.complete!!.weeks[0].courses.single())
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        compose.onNodeWithTag("source_week_all").performScrollTo().performClick()
+        compose.onNodeWithTag("target_week_1").assertIsSelected()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(1, 2), saved!!.sourceWeeks)
+        assertEquals(listOf(1, 2), saved!!.targetWeeks)
+        compose.onNodeWithTag("target_week_1").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("source_week_clear").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithTag("source_week_1").performScrollTo().performClick()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
+        compose.onNodeWithTag("target_week_1").assertIsNotSelected()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(1), saved!!.sourceWeeks)
+        assertEquals(listOf(2), saved!!.targetWeeks)
+    }
+    @Test fun originalLessonsAndPendingRangeSurviveRestoration() {
+        var saved: CourseDraft? = null
+        val original = schoolData()
+        val data = original.copy(complete = original.complete!!.copy(weeks = original.complete.weeks.map { week ->
+            week.copy(courses = week.courses.map { it.copy(lessons = listOf(1, 3)) })
+        }))
+        val edit = data.courseEditor(data.complete!!.weeks[0].courses.single())
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(1, 3), saved!!.lessons)
+        compose.onNodeWithTag("course_lesson_7").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("course_lesson_5").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_clock").assertTextEquals("13:30–16:10")
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(5, 6, 7), saved!!.lessons)
+        capture("course_editor", "editor-range")
+    }
+    @Test fun savingDisablesActionsAndFailureKeepsDraftForRetry() {
+        var saving by mutableStateOf(false)
+        var error by mutableStateOf<String?>(null)
+        var requests = 0
+        val edit = ScheduleData().courseEditor()
+        compose.setContent { GongXiaoZhuTheme {
+            CourseEditor(edit, saving, error, {}, { requests++; saving = true })
+        } }
+        compose.onNodeWithTag("course_name").performTextInput("保存失败测试")
+        compose.onNodeWithTag("save_course").performClick()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithTag("cancel_course").assertIsNotEnabled()
+        compose.onNodeWithTag("course_name").assertIsNotEnabled()
+        compose.onNodeWithTag("course_lesson_1").assertIsNotEnabled()
+        compose.runOnIdle { saving = false; error = "保存未完成，原课表保留，请重试" }
+        compose.onNodeWithTag("course_name").assertTextContains("保存失败测试")
+        compose.onNodeWithTag("save_course").assertIsEnabled()
+        compose.onNodeWithTag("course_save_error").performScrollTo().assertIsDisplayed()
+        assertEquals(1, requests)
+    }
+    @Test fun keyboardKeepsActionsVisibleAndNextDoneUseDialogFocus() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val previousFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
+        try {
+            val edit = schoolData().courseEditor()
+            compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, {}) } }
+            compose.onNodeWithTag("course_name").performClick().performTextInput("现代设计方法")
+            compose.waitUntil(5000) { automation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+            try {
+                compose.waitUntil(5000) {
+                    val ime = automation.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+                    if (ime == null) false else {
+                        val imeBounds = android.graphics.Rect().also(ime::getBoundsInScreen)
+                        val save = compose.onNodeWithTag("save_course").fetchSemanticsNode()
+                        save.boundsInRoot.height > 0 && save.layoutInfo.coordinates.localToScreen(Offset.Zero).y + save.size.height <= imeBounds.top + 1
+                    }
+                }
+            } finally {
+                captureScreen("editor-keyboard")
+            }
+            compose.onNodeWithTag("save_course").assertIsDisplayed()
+            compose.onNodeWithTag("cancel_course").assertIsDisplayed()
+            compose.onNodeWithTag("course_name").assertIsDisplayed()
+            assertTrue("键盘显示时正文至少保留一行可操作空间",
+                compose.onNodeWithTag("course_editor_body").fetchSemanticsNode().boundsInRoot.height >= with(compose.density) { 48.dp.toPx() })
+            compose.onNodeWithTag("course_name").performImeAction()
+            compose.onNodeWithTag("course_location").assertIsFocused()
+            compose.onNodeWithTag("course_location").performImeAction()
+            compose.onNodeWithTag("course_teacher").assertIsFocused()
+            compose.onNodeWithTag("course_teacher").performImeAction()
+            compose.waitUntil(5000) { automation.windows.none { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+            compose.onNodeWithTag("course_name").performScrollTo()
+            capture("course_editor", "editor-add")
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = previousFlags }
+        }
+    }
+    @Test fun sixtyWeeksStayReachableAndScrollingKeepsActionsFixed() {
+        val edit = ScheduleData().courseEditor().copy(weekCount = 60)
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, {}) } }
+        val original = compose.onNodeWithTag("course_editor_actions").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("target_week_60").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("target_week_all").performScrollTo().performClick()
+        compose.onNodeWithTag("target_week_60").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("save_course").assertIsDisplayed()
+        assertEquals(original, compose.onNodeWithTag("course_editor_actions").fetchSemanticsNode().boundsInRoot)
+        capture("course_editor", "editor-sixty-weeks")
+        compose.onNodeWithTag("course_name").performScrollTo()
+        compose.onNodeWithTag("course_name").assertIsDisplayed()
+        assertEquals(original, compose.onNodeWithTag("course_editor_actions").fetchSemanticsNode().boundsInRoot)
+        capture("course_editor", "editor-first-term")
     }
     @Test fun overlappingDetailsCloseFromTheRightWithLargeFonts() {
         var visible by mutableStateOf(true)
@@ -188,5 +336,12 @@ class CourseEditingUiTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val target = context.getExternalFilesDir(null)!!.resolve("course-$name.png")
         target.outputStream().use { compose.onNodeWithTag(tag).captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+    private fun captureScreen(name: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val target = instrumentation.targetContext.getExternalFilesDir(null)!!.resolve("course-$name.png")
+        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try { target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+        finally { bitmap.recycle() }
     }
 }

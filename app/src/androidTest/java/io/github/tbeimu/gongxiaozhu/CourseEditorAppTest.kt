@@ -35,12 +35,28 @@ class CourseEditorAppTest {
         compose.onNodeWithTag("import_schedule").performClick()
         compose.onNodeWithTag("add_custom_course").performClick()
         compose.onNodeWithTag("course_name").performTextInput("本机测试课程")
+        compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
+        runCatching { compose.onNodeWithTag("target_week_3").performScrollTo().performClick() }.onFailure {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: return@onFailure
+            try {
+                instrumentation.targetContext.getExternalFilesDir(null)!!.resolve("course-app-before-week.png").outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+            } finally { bitmap.recycle() }
+        }.getOrThrow()
+        compose.onNodeWithTag("course_lesson_7").performScrollTo().performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("course_name").assertTextContains("本机测试课程")
+        compose.onNodeWithTag("course_day_3").assertIsSelected()
+        compose.onNodeWithTag("target_week_3").assertIsSelected()
+        compose.onNodeWithTag("course_lesson_5").performScrollTo().performClick()
         compose.onNodeWithTag("save_course").performClick()
         compose.waitUntil(5000) { model().state.value.courseEditor == null && !model().state.value.courseSaving }
         val data = createScheduleRepository(compose.activity).load()
         assertNull(data.identity); assertEquals("本机测试课程", data.localTerms.single().courses.single().name)
+        assertTrue(data.localTerms.single().courses.single().occurrences.all { it.lessons == listOf(5, 6, 7) })
+        assertEquals(listOf(1, 3), data.localTerms.single().courses.single().occurrences.map { it.week }.distinct())
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithTag("my_SCHEDULE").performClick()
         compose.onNodeWithText("新建本地学期").performScrollTo().assertExists()

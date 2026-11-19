@@ -42,7 +42,14 @@ class DesignPreviewTest {
         // Robolectric has no CJK system font; borrow one from the host when it is installed.
         val fonts = listOf(FontWeight.Normal to "Noto Sans SC (TrueType).otf", FontWeight.Medium to "Noto Sans SC Medium (TrueType).otf",
             FontWeight.Bold to "Noto Sans SC Bold (TrueType).otf").map { (weight, name) -> weight to File("C:/Windows/Fonts", name) }
-        ShowcaseActivity.fontFamily = if (fonts.all { it.second.isFile }) FontFamily(fonts.map { (weight, file) -> Font(file, weight) }) else null
+        // Some Windows installs carry only the variable font: one file serves every weight through its wght axis.
+        val variable = File("C:/Windows/Fonts", "NotoSansSC-VF.ttf")
+        ShowcaseActivity.fontFamily = when {
+            fonts.all { it.second.isFile } -> FontFamily(fonts.map { (weight, file) -> Font(file, weight) })
+            variable.isFile -> FontFamily(listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold)
+                .map { Font(variable, it) })
+            else -> null
+        }
     }
 
     private fun open(tab: String? = null, page: String? = null, empty: Boolean = false, then: () -> Unit) {
