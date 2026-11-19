@@ -35,17 +35,9 @@ class WifiMonitor(context: Context) {
     private val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
     val connections = callbackFlow {
-        // Snapshot once, then use ordered callback data on the same main thread.
+        // Register first so changes during the initial snapshot still have ordered callbacks.
         val networks = linkedMapOf<Network, LinkProperties?>()
         val validated = mutableMapOf<Network, Boolean>()
-        @Suppress("DEPRECATION")
-        manager.allNetworks.forEach { network ->
-            if (isPhysicalWifi(manager.getNetworkCapabilities(network))) {
-                networks[network] = manager.getLinkProperties(network)
-                validated[network] = manager.getNetworkCapabilities(network)
-                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
-            }
-        }
         fun publish() {
             val selected = manager.activeNetwork?.takeIf { networks.containsKey(it) }
                 ?: networks.keys.minByOrNull { it.networkHandle }
@@ -87,7 +79,17 @@ class WifiMonitor(context: Context) {
         val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
         manager.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
-        publish()
-        awaitClose { manager.unregisterNetworkCallback(callback) }
+        try {
+            @Suppress("DEPRECATION")
+            manager.allNetworks.forEach { network ->
+                if (isPhysicalWifi(manager.getNetworkCapabilities(network))) {
+                    networks[network] = manager.getLinkProperties(network)
+                    validated[network] = manager.getNetworkCapabilities(network)
+                        ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                }
+            }
+            publish()
+            awaitClose()
+        } finally { manager.unregisterNetworkCallback(callback) }
     }.flowOn(Dispatchers.Main.immediate).distinctUntilChangedBy { it?.let { wifi -> wifi.key to wifi.internetValidated } }
 }

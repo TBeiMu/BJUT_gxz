@@ -67,11 +67,7 @@ private data class NetworkSnapshot(val capabilities: NetworkCapabilities? = null
 internal fun updateNetworks(context: Context) = callbackFlow {
     val manager = context.getSystemService(ConnectivityManager::class.java)
     val networks = linkedMapOf<Network, NetworkSnapshot>()
-    var active = manager.activeNetwork
-    @Suppress("DEPRECATION")
-    manager.allNetworks.forEach {
-        networks[it] = NetworkSnapshot(manager.getNetworkCapabilities(it), manager.getLinkProperties(it))
-    }
+    var active: Network? = null
     fun publish() {
         val routes = networks.entries.sortedBy { it.key.networkHandle }.mapNotNull { (network, snapshot) ->
             val caps = snapshot.capabilities ?: return@mapNotNull null
@@ -116,6 +112,12 @@ internal fun updateNetworks(context: Context) = callbackFlow {
         listening = true
         manager.registerDefaultNetworkCallback(defaultCallback, handler)
         listeningDefault = true
+        // Both callbacks must cover changes while the initial routes and default are read.
+        active = manager.activeNetwork
+        @Suppress("DEPRECATION")
+        manager.allNetworks.forEach {
+            networks[it] = NetworkSnapshot(manager.getNetworkCapabilities(it), manager.getLinkProperties(it))
+        }
         publish()
         awaitClose { }
     } finally {
