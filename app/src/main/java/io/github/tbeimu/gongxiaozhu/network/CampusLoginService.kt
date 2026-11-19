@@ -44,11 +44,10 @@ class CampusLoginService : Service() {
         val id = intent?.getStringExtra(TASK_ID)
         if (intent?.action == CANCEL) {
             if (id != null) controller.cancel(id)
-            if (ownedId == null) stopSelfResult(startId)
+            if (!ownsRunningTask()) finishService()
             return START_NOT_STICKY
         }
-        if (id != null && id == ownedId) return START_NOT_STICKY
-        if (ownedId != null && controller.state.value.running) return START_NOT_STICKY
+        if (ownsRunningTask()) return START_NOT_STICKY
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(controller.state.value, id),
                 if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE else 0)
@@ -74,6 +73,11 @@ class CampusLoginService : Service() {
             finishService()
         }
         return START_NOT_STICKY
+    }
+
+    private fun ownsRunningTask(): Boolean {
+        val state = controller.state.value
+        return ownedId != null && state.taskId == ownedId && state.running && observer?.isActive == true
     }
 
     private fun notification(state: LoginUiState, id: String?): Notification {
