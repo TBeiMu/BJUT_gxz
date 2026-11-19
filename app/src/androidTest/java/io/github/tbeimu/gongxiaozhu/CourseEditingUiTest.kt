@@ -226,9 +226,11 @@ class CourseEditingUiTest {
         val edit = data.courseEditor(data.complete!!.weeks[0].courses.single())
         val restoration = StateRestorationTester(compose)
         restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        compose.onNodeWithTag("course_lesson_hint").assertDoesNotExist()
         compose.onNodeWithTag("save_course").performClick()
         assertEquals(listOf(1, 3), saved!!.lessons)
         compose.onNodeWithTag("course_lesson_7").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_hint").assertTextEquals("已选第 7 节，再点结束节次")
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("course_lesson_5").performScrollTo().performClick()
         compose.onNodeWithTag("course_lesson_clock").assertTextEquals("13:30–16:10")

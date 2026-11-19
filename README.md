@@ -2,15 +2,15 @@
 
 北京工业大学 Android 校园助手。整学期课表、校园网登录和资费查询集中在一个 App 中。
 
-**v0.5.5 正式版 · Android 12 及以上 · versionCode 36**
+**v0.5.6 正式版 · Android 12 及以上 · versionCode 37**
 
 用户已确认 v0.4.8 的主要功能基本齐全并可用。项目进入维护与体验优化，源码仓库为 [TBeiMu/BJUT_gxz](https://github.com/TBeiMu/BJUT_gxz)。
 
-v0.5.5 新增离线校车时刻表，早晚双列展示中蓝校区—北工大专线，提供完整路线、末车标记与按上海时间更新的下一班提示。保留此前校园认证提示修复、课程编辑、个人页暖心文案、小鸟图标及原开屏与加载动画，沿用固定签名，可覆盖升级，详见 [更新说明](docs/releases/v0.5.5.md)。
+v0.5.6 精简课程新增与编辑中的节次说明文字，点选起点后保留必要的下一步提示；沿用固定签名及本机资料格式，可覆盖升级。此前版本新增的离线校车时刻表等功能继续保留，详见 [更新说明](docs/releases/v0.5.6.md)。
 
 ## 下载与安装
 
-[下载 v0.5.5 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.5/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.5/SHA256SUMS.txt)
+[下载 v0.5.6 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/SHA256SUMS.txt)
 
 下载后使用手机的浏览器或文件管理器打开 APK，按系统提示允许“安装未知应用”。已有正式版直接覆盖安装，账号、默认账号、课表和设置会保留；请勿先卸载或清除应用数据。调试版与正式版独立安装。
 
@@ -54,7 +54,7 @@ v0.5.1 支持后台继续导入，v0.5.0 及以前仍需保持前台。详见 [�
 
 自定义课程的星期支持多选，多日调课超过单条容量时分开保存并保留其他安排；详情简化为课程卡片，编辑、删除和右侧关闭同排。已合入 v0.5.3，见 [本次验证](docs/testing/星期多选与详情布局验证.md)。
 
-2026 年 11 月 19 日的源码维护优化课程新增和编辑弹窗：全部选项直接展开，取消及保存固定；节次点选起止范围，可选单节，周次提供全部、单周、双周和清空。批量编辑时目标周次先跟随原范围，主动调周后独立保留；学期周数在确认后移除超范围选择。公开 v0.5.5 APK 尚未包含此次调整，详见 [课程编辑体验优化验证](docs/testing/课程编辑体验优化验证.md)。
+2026 年 11 月 19 日起，课程新增和编辑弹窗全部选项直接展开，取消及保存固定；节次点选起止范围，可选单节，周次提供全部、单周、双周和清空。批量编辑时目标周次先跟随原范围，主动调周后独立保留。v0.5.6 进一步移除节次区静态操作说明，仅在选中起点后显示下一步提示；详见 [课程编辑体验优化验证](docs/testing/课程编辑体验优化验证.md)。
 
 ### 登录校园网
 

@@ -140,12 +140,10 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
             courseLessonClock(selectedLessons.lessons)?.let {
                 Text(it, Modifier.testTag("course_lesson_clock"), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
             }
-            val nonconsecutive = !selectedLessons.changed && selectedLessons.lessons.sorted().zipWithNext().any { (a, b) -> b != a + 1 }
-            Text(when {
-                nonconsecutive -> "保留原非连续节次，点选后改为连续区间"
-                selectedLessons.anchor != null -> "已选第 ${selectedLessons.anchor} 节，再点结束节次"
-                else -> "点起始、结束节次；只点一次可选单节"
-            }, Modifier.testTag("course_lesson_hint"), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+            selectedLessons.anchor?.let { anchor ->
+                Text("已选第 $anchor 节，再点结束节次", Modifier.testTag("course_lesson_hint"),
+                    style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..20).forEach { lesson ->
                     EditorChoice("$lesson", lesson in selectedLessons.lessons, !saving, "course_lesson_$lesson",
