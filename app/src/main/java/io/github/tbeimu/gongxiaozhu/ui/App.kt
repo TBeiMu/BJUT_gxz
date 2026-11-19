@@ -152,9 +152,10 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     LaunchedEffect(state.message) {
         state.message?.let { snackbar.showSnackbar(it); model.clearMessage() }
     }
-    UpdateCheckFeedback(updateActions.repository, snackbar, updateUnobstructed && !updateDialogVisible, updateActions.releasePage)
-    CourseUndoFeedback(model, state.schedule.courseUndo.takeUnless { state.courseSaving }, snackbar)
-    val nameFeedbackVisible = updateUnobstructed && !updateDialogVisible && !state.busy &&
+    val snackbarUnobstructed = updateUnobstructed && !updateDialogVisible
+    UpdateCheckFeedback(updateActions.repository, snackbar, snackbarUnobstructed, updateActions.releasePage)
+    CourseUndoFeedback(model, state.schedule.courseUndo.takeUnless { state.courseSaving }, snackbar, snackbarUnobstructed)
+    val nameFeedbackVisible = snackbarUnobstructed && !state.busy &&
         !state.loading && !state.storageBlocked
     LaunchedEffect(model, nameFeedbackVisible) {
         if (!nameFeedbackVisible) return@LaunchedEffect

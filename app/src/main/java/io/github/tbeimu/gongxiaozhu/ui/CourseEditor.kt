@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -26,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.isOutOfBounds
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.boundsInRoot
@@ -71,7 +71,8 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var picker by rememberSaveable(context.token) { mutableStateOf(false) }
     var discardRequested by rememberSaveable(context.token) { mutableStateOf(false) }
     val newTerm = context.creatingTerm
-    val weeks = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
+    fun weekCount() = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
+    val weeks = weekCount()
     val originalWeeks = context.originalArrangements.map { it.week }.distinct()
     val preservesLateLessons = course?.lessons?.any { it !in 1..12 } == true && selectedLessons.lessons == course.lessons
     val validLessons = selectedLessons.lessons.isNotEmpty() &&
@@ -86,7 +87,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
     fun draft() = CourseDraft(name, location, teacher, weekdays,
         if (course != null) selectedWeeks.sourceWeeks else emptyList(), selectedWeeks.targetWeeks,
-        selectedLessons.lessons, monday, weeks)
+        selectedLessons.lessons, monday, weekCount())
     fun confirmWeekCount() { selectedWeeks = selectedWeeks.fitTerm(count.toIntOrNull() ?: 0, originalWeeks) }
 
     if (context.deleteOnly) {
@@ -95,11 +96,12 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         return
     }
 
-    val dirty = courseDraftHasChanges(context, draft())
     fun requestDismiss() {
-        if (!saving) {
-            if (dirty) discardRequested = true else onDismiss()
-        }
+        if (saving) return
+        if (courseDraftHasChanges(context, draft())) discardRequested = true else onDismiss()
+    }
+    fun outsideTap() {
+        if (!saving && !courseDraftHasChanges(context, draft())) onDismiss()
     }
     if (discardRequested) {
         DiscardChangesDialog(onContinue = { discardRequested = false }, onDiscard = { if (!saving) onDismiss() })
@@ -117,8 +119,8 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         return
     }
 
-    CourseEditorDialog(if (course == null) "添加自定义课程" else "编辑课程", saving, valid, !dirty,
-        ::requestDismiss, { onSave(draft()) }) {
+    CourseEditorDialog(if (course == null) "添加自定义课程" else "编辑课程", saving, valid,
+        ::requestDismiss, ::outsideTap, { onSave(draft()) }) {
         val focus = LocalFocusManager.current
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CourseField(name, {
@@ -209,30 +211,35 @@ private val EditorOptionShape = RoundedCornerShape(12.dp)
 
 /** One scroll owner; the header and actions always fit the space above the IME and system bars. */
 @Composable
-private fun CourseEditorDialog(title: String, saving: Boolean, valid: Boolean, dismissOnOutside: Boolean,
-    onDismiss: () -> Unit, onSave: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun CourseEditorDialog(title: String, saving: Boolean, valid: Boolean, onDismiss: () -> Unit,
+    onOutsideTap: () -> Unit, onSave: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val density = LocalDensity.current
-    val outsideDismissAllowed = dismissOnOutside && !saving
-    val currentDismiss by rememberUpdatedState(onDismiss)
+    val currentOutsideTap by rememberUpdatedState(onOutsideTap)
     var surfaceBounds by remember { mutableStateOf<Rect?>(null) }
     var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     Dialog(onDismissRequest = { if (!saving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
-            dismissOnBackPress = !saving, dismissOnClickOutside = outsideDismissAllowed)) {
+            dismissOnBackPress = !saving, dismissOnClickOutside = false)) {
         CompositionLocalProvider(LocalDensity provides density) {
             Box(Modifier.fillMaxSize().testTag("course_editor_overlay")
                 .onGloballyPositioned { overlayOrigin = it.positionInRoot() }
-                .pointerInput(outsideDismissAllowed) {
-                    if (!outsideDismissAllowed) return@pointerInput
+                .pointerInput(saving) {
+                    if (saving) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         if (surfaceBounds?.contains(down.position + overlayOrigin) != false) return@awaitEachGesture
                         down.consume()
-                        // Stay on Initial: Main would see this same consumed down and cancel the tap.
-                        val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
-                        if (up != null && surfaceBounds?.contains(up.position + overlayOrigin) == false) {
-                            up.consume()
-                            currentDismiss()
+                        while (true) {
+                            val change = awaitPointerEvent(PointerEventPass.Initial).changes.singleOrNull() ?: break
+                            if (change.id != down.id || change.isConsumed || change.isOutOfBounds(size, extendedTouchPadding) ||
+                                (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+                            if (!change.pressed) {
+                                if (surfaceBounds?.contains(change.position + overlayOrigin) == false) {
+                                    change.consume()
+                                    currentOutsideTap()
+                                }
+                                break
+                            }
                         }
                     }
                 }) {

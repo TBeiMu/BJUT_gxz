@@ -1,12 +1,15 @@
 package io.github.tbeimu.gongxiaozhu
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.data.*
 import io.github.tbeimu.gongxiaozhu.schedule.*
+import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import io.github.tbeimu.gongxiaozhu.update.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -52,10 +55,12 @@ class UpdatePromptIntegrationTest {
             val identity = ScheduleIdentity("fictional-update-student", "测试同学")
             val term = ScheduleTerm("2026-2027", "1", 1, 1)
             val monday = LocalDate.now().with(java.time.DayOfWeek.MONDAY)
-            val week = ScheduleWeek(1, (0L..6L).map { monday.plusDays(it).toString() }, emptyList())
+            val week = ScheduleWeek(1, (0L..6L).map { monday.plusDays(it).toString() },
+                listOf(ScheduleCourse("fictional-update-course", "撤销测试课程", monday.toString(), listOf(1, 2))))
             createScheduleRepository(context).apply {
                 clear(); begin(identity, term); append(week); finish(1); begin(identity, term)
             }
+            reloadScheduleFixture(context)
             val preferences = context.getSharedPreferences("update_ui", Context.MODE_PRIVATE)
             notificationAsked = preferences.getBoolean("notification_asked", false)
             preferences.edit().putBoolean("notification_asked", true).commit()
@@ -93,6 +98,32 @@ class UpdatePromptIntegrationTest {
     private fun openManualCheck() {
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithTag("my_UPDATES").performScrollTo().performClick()
+    }
+
+    @Test fun courseUndoGetsItsFirstWindowAfterTheUpdatePromptCloses() {
+        val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
+        compose.waitUntil(5000) { source.checks == 1 && !model.state.value.schedule.loading }
+        val original = model.state.value.schedule.data
+        val course = original.complete!!.weeks.single().courses.single()
+        compose.runOnIdle { model.editCourse(course, week = 1) }
+        compose.onNodeWithTag("course_name").performTextReplacement("修改后的测试课程")
+        compose.runOnUiThread { source.gate.complete(Unit) }
+        compose.waitUntil(5000) { repository.state.value.prompt != null }
+        compose.onNodeWithTag("update_prompt").assertDoesNotExist()
+
+        compose.onNodeWithTag("save_course").performClick()
+        compose.waitUntil(5000) {
+            model.state.value.schedule.courseUndo != null &&
+                compose.onAllNodes(hasTestTag("update_prompt")).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("update_prompt").assertIsDisplayed()
+        // The undo deadline uses elapsed real time and should not start under the dialog.
+        SystemClock.sleep(10_500L)
+        assertNotNull(model.state.value.schedule.courseUndo)
+        compose.onNodeWithTag("cancel_update_prompt").performClick()
+        compose.onNodeWithText("撤销", substring = false).assertIsDisplayed().performClick()
+        compose.waitUntil(5000) { !model.state.value.courseSaving && model.state.value.schedule.data == original }
+        assertEquals(original, createScheduleRepository(compose.activity).load())
     }
 
     @Test fun currentVersionFromMineShowsOnlyNoticeWithoutOpeningDetailsAndDoesNotRepeatOnRotation() {

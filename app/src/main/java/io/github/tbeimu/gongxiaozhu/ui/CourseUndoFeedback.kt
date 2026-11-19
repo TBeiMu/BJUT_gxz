@@ -7,6 +7,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import io.github.tbeimu.gongxiaozhu.schedule.CourseUndo
@@ -33,10 +34,13 @@ internal class CourseUndoTimer(private val now: () -> Long = SystemClock::elapse
 }
 
 @Composable
-internal fun CourseUndoFeedback(model: AppViewModel, undo: CourseUndo?, snackbar: SnackbarHostState) {
+internal fun CourseUndoFeedback(model: AppViewModel, undo: CourseUndo?, snackbar: SnackbarHostState,
+    unobstructed: Boolean) {
     val accessibility = LocalAccessibilityManager.current
+    val canShow = rememberUpdatedState(unobstructed)
     LaunchedEffect(model, undo?.token, snackbar) {
         val action = undo ?: return@LaunchedEffect
+        snapshotFlow { canShow.value }.first { it }
         val visuals = object : SnackbarVisuals {
             override val message = if (action.deleted) "已删除 ${action.deletedCount} 次安排" else "课程已更新"
             override val actionLabel = "撤销"
@@ -46,7 +50,9 @@ internal fun CourseUndoFeedback(model: AppViewModel, undo: CourseUndo?, snackbar
         }
         coroutineScope {
             val showing = async { snackbar.showSnackbar(visuals) }
-            val displayed = snapshotFlow { snackbar.currentSnackbarData }.first { it?.visuals === visuals }!!
+            // Another notice may have been using the host when this action was queued.
+            val displayed = snapshotFlow { snackbar.currentSnackbarData?.takeIf { canShow.value && it.visuals === visuals } }
+                .first { it != null }!!
             // Material3 Long duration, extended with the same accessibility recommendation as SnackbarHost.
             val recommended = accessibility?.calculateRecommendedTimeoutMillis(10_000L,
                 containsIcons = true, containsText = true, containsControls = true) ?: 10_000L

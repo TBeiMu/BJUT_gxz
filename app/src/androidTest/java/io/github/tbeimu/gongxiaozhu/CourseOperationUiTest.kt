@@ -5,11 +5,14 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.inspector.WindowInspector
 import androidx.activity.ComponentActivity
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import io.github.tbeimu.gongxiaozhu.ui.*
@@ -21,11 +24,8 @@ import org.junit.Test
 class CourseOperationUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private fun pressDialogBack() {
-        // Native input does not synchronize with Compose's test clock or updated Dialog callbacks.
-        compose.waitForIdle()
+    private fun focusedDialogWindow(): View {
         var dialog: View? = null
-        // Compose clicks target a View directly; a system key instead follows native window focus.
         compose.waitUntil(5000) {
             compose.runOnUiThread {
                 dialog = WindowInspector.getGlobalWindowViews().firstOrNull {
@@ -34,10 +34,17 @@ class CourseOperationUiTest {
             }
             dialog != null
         }
-        compose.runOnUiThread { dialog!!.windowInsetsController?.hide(WindowInsets.Type.ime()) }
+        return checkNotNull(dialog)
+    }
+
+    private fun pressDialogBack() {
+        // Native input does not synchronize with Compose's test clock.
+        compose.waitForIdle()
+        val dialog = focusedDialogWindow()
+        compose.runOnUiThread { dialog.windowInsetsController?.hide(WindowInsets.Type.ime()) }
         compose.waitUntil(5000) {
             var hidden = false
-            compose.runOnUiThread { hidden = dialog!!.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) != true }
+            compose.runOnUiThread { hidden = dialog.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) != true }
             hidden
         }
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
@@ -122,6 +129,55 @@ class CourseOperationUiTest {
         compose.onNodeWithTag("discard_changes").performClick()
         compose.onNodeWithTag("discard_changes_dialog").assertDoesNotExist()
         assertEquals(1, dismissed)
+    }
+
+    @Test fun immediateBackReadsWeekdayChangeBeforeRecomposition() {
+        val context = editorContext()
+        var dismissed = 0
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(context, false, null, { dismissed++ }, {}) } }
+        val dialog = focusedDialogWindow()
+        compose.onNodeWithTag("course_day_3").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { click ->
+            click()
+            checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithTag("discard_changes_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("continue_editing").performClick()
+        compose.onNodeWithTag("course_day_3").assertIsOn()
+        assertEquals(0, dismissed)
+    }
+
+    @Test fun immediateBackReadsWeekCountBeforeRecomposition() {
+        val context = editorContext(creatingTerm = true)
+        val changedCount = if (context.weekCount == 25) "26" else "25"
+        var dismissed = 0
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(context, false, null, { dismissed++ }, {}) } }
+        val dialog = focusedDialogWindow()
+        compose.onNodeWithTag("term_weeks").performScrollTo().performSemanticsAction(SemanticsActions.SetText) { setText ->
+            assertTrue(setText(AnnotatedString(changedCount)))
+            checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithTag("discard_changes_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("continue_editing").performClick()
+        compose.onNodeWithTag("term_weeks").assertTextContains(changedCount)
+        assertEquals(0, dismissed)
+    }
+
+    @Test fun outsideSwipeKeepsCleanEditorOpenAndAnOutsideTapStillClosesIt() {
+        val context = editorContext()
+        val visible = mutableStateOf(true)
+        compose.setContent { GongXiaoZhuTheme { if (visible.value) CourseEditor(context, false, null,
+            { visible.value = false }, {}) } }
+        compose.onNodeWithTag("course_editor_overlay").performTouchInput {
+            val start = Offset(1f, center.y)
+            down(start)
+            moveTo(start - Offset(0f, height / 4f))
+            moveTo(start)
+            up()
+        }
+        compose.onNodeWithTag("course_editor").assertExists()
+        compose.onNodeWithTag("discard_changes_dialog").assertDoesNotExist()
+        compose.onNodeWithTag("course_editor_overlay").performTouchInput { click(Offset(1f, center.y)) }
+        compose.onNodeWithTag("course_editor").assertDoesNotExist()
     }
 
     @Test fun savingDisablesCancelOutsideAndSystemBack() {
