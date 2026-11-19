@@ -51,8 +51,18 @@ class ScheduleBackgroundServiceTest {
         createAccountRepository(context).apply { reset(); load(); settings(AppSettings(autoLogin = false)) }
         instrumentation.runOnMainSync { controller = ScheduleImportRuntime.get(context).controller }
         waitFor { !controller.state.value.loading && !controller.state.value.busy }
+        // Earlier fixtures can replace encrypted files through another repository instance.
+        // Refresh the application-scoped repository before its guarded unbind/write.
+        reloadScheduleFixture(context)
         instrumentation.runOnMainSync { controller.clear() }
-        waitFor { !controller.state.value.busy }
+        waitFor { !controller.state.value.loading && !controller.state.value.busy }
+        val cleared = controller.state.value
+        assertFalse("课表服务测试夹具清理后存储仍被阻断", cleared.blocked)
+        assertNull(cleared.data.identity)
+        assertNull(cleared.data.complete)
+        assertNull(cleared.data.pending)
+        assertEquals(0, cleared.imported)
+        assertEquals(0, cleared.total)
         scenario = ActivityScenario.launch(MainActivity::class.java)
         waitFor { controller.state.value.networkKind != null }
     }
@@ -75,7 +85,12 @@ class ScheduleBackgroundServiceTest {
             controller.networkChanged(ScheduleConnection("fictional-service-network", ScheduleNetworkKind.WIFI) { session })
             controller.start()
         }
-        waitFor { controller.state.value.imported == 1 && controller.state.value.busy }
+        waitFor(diagnostics = {
+            val state = controller.state.value
+            "等待首周导入：imported=${state.imported}/${state.total}, busy=${state.busy}, " +
+                "notice=${state.notice}, hasTask=${state.taskId != null}, message=${state.message}, " +
+                "opens=${session.opens.get()}, closed=${session.closed}, service=${serviceRunning()}"
+        }) { controller.state.value.imported == 1 && controller.state.value.busy }
         waitFor { serviceRunning() }
     }
 
@@ -83,10 +98,10 @@ class ScheduleBackgroundServiceTest {
     private fun serviceRunning() = context.getSystemService(ActivityManager::class.java)
         .getRunningServices(Int.MAX_VALUE).any { it.service.className == ScheduleImportService::class.java.name && it.foreground }
 
-    private fun waitFor(condition: () -> Boolean) {
+    private fun waitFor(diagnostics: () -> String = { "等待课表任务状态超时" }, condition: () -> Boolean) {
         val end = android.os.SystemClock.elapsedRealtime() + 15_000
         while (!condition() && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(25)
-        assertTrue("等待课表任务状态超时", condition())
+        assertTrue(diagnostics(), condition())
     }
 
     private fun shell(command: String): String = instrumentation.uiAutomation.executeShellCommand(command).use {

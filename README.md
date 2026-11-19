@@ -8,6 +8,8 @@
 
 v0.5.6 的 2026 年 11 月 20 日修订版加入课程与账号编辑防误退、课程撤销、删除范围预览及资费操作优化，并将“外观设置”更名为“个性化”。此前加入的课程周次回显、长按拖动补选和“我的”底部 GitHub 入口均可使用。详见[更新说明](docs/releases/v0.5.6.md)。
 
+后续源码维护修复了调课同时修改课程信息时的目标丢失、未知晚节次的结束提示、设备注销结果未确认提示、实体网络初始状态、旧下载通知、认证服务重复启动收尾及系统动画设置更新。上述维护尚未发布到下载附件，版本仍为 0.5.6／37；检查范围与验证结果见[维护体检记录](docs/testing/维护体检与修复验证.md)。
+
 ## 下载与安装
 
 [下载 v0.5.6 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/SHA256SUMS.txt)

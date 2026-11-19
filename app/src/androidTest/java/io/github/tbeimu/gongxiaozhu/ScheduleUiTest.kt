@@ -87,10 +87,11 @@ class ScheduleUiTest {
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("第 2 周")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("schedule_status").assertDoesNotExist()
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.onNodeWithText("示例同学").assertExists()
+        compose.onNodeWithTag("my_profile_title").assertTextEquals("测试校园网")
         compose.onNodeWithTag("my_ACCOUNTS").assertExists()
         screenshot("my-preview.png")
         compose.onNodeWithTag("my_SCHEDULE").performClick()
+        compose.onNodeWithText("示例同学").assertIsDisplayed()
         compose.onNodeWithText("更换 / 解绑课表账号").performScrollTo().performClick()
         compose.onNodeWithText("取消", substring = false).performClick()
         compose.onNodeWithText("资费", substring = false).performClick()

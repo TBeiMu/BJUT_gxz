@@ -239,10 +239,10 @@ class UpdatePromptIntegrationTest {
         val context = inst.targetContext
         val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
+        org.junit.Assume.assumeFalse("请在启动 instrumentation 前由宿主撤销通知权限；测试内撤销会终止目标进程", granted)
         val info = inst.uiAutomation.serviceInfo
         val oldFlags = info.flags
         try {
-            shell("pm revoke ${context.packageName} android.permission.POST_NOTIFICATIONS")
             shell("pm clear-permission-flags ${context.packageName} android.permission.POST_NOTIFICATIONS user-set user-fixed")
             context.getSharedPreferences("update_ui", Context.MODE_PRIVATE).edit().putBoolean("notification_asked", false).commit()
             info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
@@ -257,7 +257,6 @@ class UpdatePromptIntegrationTest {
             compose.onNodeWithTag("update_card").assertExists()
         } finally {
             info.flags = oldFlags; inst.uiAutomation.serviceInfo = info
-            if (granted) shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
         }
     }
 

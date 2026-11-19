@@ -182,7 +182,7 @@ class WeekPagerUiTest {
                 assertEquals(fixed.getValue(tag).first, node.id)
                 assertEquals(fixed.getValue(tag).second, node.boundsInRoot)
             }
-            compose.onNodeWithText("课程详情").assertDoesNotExist()
+            compose.onNodeWithTag("course_details").assertDoesNotExist()
         }
         (2..7).forEach { flick(-1, it) }
         screenshot("rapid-forward")
@@ -213,9 +213,11 @@ class WeekPagerUiTest {
             down(center); repeat(8) { moveBy(Offset(0f, 4f), delayMillis = 80) }; advanceEventTime(250); up()
         }
         title(1)
-        compose.onNodeWithText("课程详情").assertDoesNotExist()
+        compose.onNodeWithTag("course_details").assertDoesNotExist()
         compose.onNodeWithTag("course_1_0_1").performClick()
-        compose.onNodeWithText("课程详情").assertIsDisplayed()
+        compose.onNodeWithTag("course_details").assertIsDisplayed()
+        compose.onNodeWithTag("course_detail_0").assertIsDisplayed()
+        compose.onNode(hasText("第一节测试课程") and hasAnyAncestor(hasTestTag("course_detail_0"))).assertIsDisplayed()
     }
 
     @Test fun cancelledTouchObscuringBackgroundAndDataReplacementDiscardPendingTurn() {
@@ -268,7 +270,11 @@ class WeekPagerUiTest {
         drag(-.4f); title(1)
         compose.onNodeWithTag("lesson_13").assertIsDisplayed()
         compose.onNodeWithTag("course_1_1_13").assertIsDisplayed().performClick()
-        compose.onNodeWithText("重叠课程", substring = true).assertExists()
+        compose.onNodeWithTag("course_details").assertIsDisplayed()
+        compose.onNodeWithTag("course_detail_0").assertIsDisplayed()
+        compose.onNodeWithTag("course_detail_1").assertExists()
+        compose.onNode(hasText("长名称晚间课程用于验证完整显示") and hasAnyAncestor(hasTestTag("course_detail_0"))).assertIsDisplayed()
+        compose.onNode(hasText("重叠课") and hasAnyAncestor(hasTestTag("course_detail_1"))).performScrollTo().assertIsDisplayed()
         screenshot("large-font-overlap")
     }
 

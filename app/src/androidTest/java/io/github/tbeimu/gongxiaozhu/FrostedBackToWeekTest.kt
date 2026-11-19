@@ -121,8 +121,10 @@ class FrostedBackToWeekTest {
         try {
             compose.onNodeWithContentDescription("选择周次").performClick()
             compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
-            compose.onNodeWithTag("week_choice_2").performClick()
+            // The selector is still sliding while the clock is paused; activate its actual action.
+            compose.onNodeWithTag("week_choice_2").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
             compose.mainClock.advanceTimeBy(80); compose.waitForIdle()
+            compose.onNodeWithTag("schedule_week_title").assertTextContains("第 2 周")
             val entering = compose.onNodeWithTag("back_current_week_surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             preview("back-to-week-entering")
             compose.mainClock.advanceTimeBy(96); compose.waitForIdle()

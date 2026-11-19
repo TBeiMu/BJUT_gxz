@@ -44,6 +44,7 @@ class CampusTitleLifecycleTest {
                 append(ScheduleWeek(1, dates, listOf(ScheduleCourse("fake-course", "虚构课程", dates[0], listOf(11,12)))))
                 finish(1)
             }
+            reloadScheduleFixture(context)
         }
         override fun after() {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -61,10 +62,16 @@ class CampusTitleLifecycleTest {
     private fun start(): CampusLoginRuntime {
         val runtime = CampusLoginRuntime.get(compose.activity)
         val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
-        compose.waitUntil(10_000) { !model.state.value.loading && !model.state.value.schedule.loading &&
-            (runtime.connections.value as? WifiObservation.Current)?.connection != null }
+        compose.waitUntil(10_000) {
+            val schedule = model.state.value.schedule
+            !model.state.value.loading && !schedule.loading && !schedule.busy && !schedule.blocked &&
+                schedule.data.identity?.studentId == "fictional-student" &&
+                schedule.data.complete?.identity?.studentId == "fictional-student" &&
+                (runtime.connections.value as? WifiObservation.Current)?.connection != null
+        }
         // These checks are about the week title and grid; the tab opens on today, so switch to the week first.
-        compose.onNodeWithTag("schedule_mode").performClick()
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_mode")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("schedule_mode").assertIsDisplayed().performClick()
         compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("week_grid_1")).fetchSemanticsNodes().isNotEmpty() }
         compose.runOnUiThread {
             CampusLoginController::class.java.getDeclaredField("authenticator").apply { isAccessible = true }
@@ -72,6 +79,9 @@ class CampusTitleLifecycleTest {
             runtime.controller.login()
         }
         compose.waitUntil(5000) { runtime.controller.state.value.running }
+        // Runtime delivery and lifecycle-aware title collection can follow the running flag.
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("schedule_week_title") and
+            hasText("正在登录校园网")).fetchSemanticsNodes().isNotEmpty() }
         return runtime
     }
 
