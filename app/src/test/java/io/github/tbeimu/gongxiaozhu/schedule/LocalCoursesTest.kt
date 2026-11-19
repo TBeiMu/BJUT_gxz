@@ -65,7 +65,7 @@ class LocalCoursesTest {
         assertEquals("虚构课程", refreshed.complete!!.weeks[0].courses[0].name)
         assertEquals(1, refreshed.localTerms.single().courses.size)
     }
-    @Test fun schoolEditingOnlyMatchesOriginalSeriesAndSelectedWeeks() {
+    @Test fun schoolEditingOnlyReplacesClickedArrangementAndPreservesTargetWeekOriginal() {
         val repo = repository(); imported(repo)
         val c = repo.snapshot().complete!!.weeks[0].courses[0]
         val context = repo.snapshot().courseEditor(c)
@@ -73,7 +73,46 @@ class LocalCoursesTest {
         val result = repo.edit(context, draft(context, target = listOf(2), day = 3)).complete!!
         assertTrue(result.weeks[0].courses.isEmpty())
         assertEquals(2, result.weeks[1].courses.size)
+        assertTrue(result.weeks[1].courses.any { it.date == demoWeek(2).dates[0] && it.lessons == c.lessons })
         assertTrue(result.weeks[1].courses.any { it.date == LocalDate.parse(demoWeek(2).dates[0]).plusDays(2).toString() })
+    }
+    @Test fun schoolEditingDoesNotDuplicateAnExistingExactTargetOccurrence() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm)
+        val source = demoWeek(1).courses.single()
+        val targetWeek = demoWeek(2)
+        repo.append(demoWeek(1).copy(courses = listOf(source)))
+        repo.append(targetWeek.copy(courses = listOf(source.copy(date = targetWeek.dates[2]))))
+        val data = repo.finish(1)
+        val context = data.courseEditor(source)
+        val result = repo.edit(context, draft(context, target = listOf(2), day = 3)).complete!!
+        assertTrue(result.weeks[0].courses.isEmpty())
+        assertEquals(1, result.weeks[1].courses.count { it.id == source.id && it.date == targetWeek.dates[2] && it.lessons == source.lessons })
+    }
+    @Test fun editorContextListsEveryOriginalWeekAndLessonPattern() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm)
+        val mondayCourse = demoWeek(1).courses.single()
+        repo.append(demoWeek(1).copy(courses = listOf(mondayCourse)))
+        val weekTwoMonday = LocalDate.parse(demoWeek(2).dates.first()).toString()
+        repo.append(demoWeek(2).copy(courses = listOf(mondayCourse.copy(lessons = listOf(5, 6), date = weekTwoMonday))))
+        val data = repo.finish(1)
+        val context = data.courseEditor(mondayCourse)
+        assertEquals(listOf(CourseOriginalArrangement(1, 1, listOf(1, 2)),
+            CourseOriginalArrangement(2, 1, listOf(5, 6))), context.originalArrangements)
+    }
+    @Test fun editingAnImportedLessonAboveTwelveCanPreserveItButCannotSelectItAnew() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm)
+        val original = demoWeek(1).courses.single().copy(lessons = listOf(13, 14))
+        repo.append(demoWeek(1).copy(courses = listOf(original))); repo.append(demoWeek(2)); repo.finish(1)
+        val context = repo.snapshot().courseEditor(original)
+        val unchanged = draft(context, name = "更名课程", target = listOf(context.defaultWeek), day = context.defaultWeekday, lessons = listOf(13, 14))
+        assertEquals(listOf(13, 14), repo.edit(context, unchanged).complete!!.weeks[0].courses.single().lessons)
+        val updated = repo.snapshot()
+        val updatedCourse = updated.complete!!.weeks[0].courses.single()
+        val updatedContext = updated.courseEditor(updatedCourse)
+        val updatedDraft = draft(updatedContext, name = updatedCourse.name, target = listOf(1), day = 1, lessons = listOf(13, 14))
+        assertThrows(CourseValidationException::class.java) { repo.edit(updatedContext, updatedDraft.copy(lessons = listOf(13, 15))) }
+        assertThrows(CourseValidationException::class.java) { repo.edit(updatedContext, updatedDraft.copy(targetWeeks = listOf(2))) }
+        assertThrows(CourseValidationException::class.java) { repo.edit(updatedContext, updatedDraft.copy(weekdays = listOf(3))) }
     }
     @Test fun deletingOneCustomOccurrenceRetainsOtherWeeksAndStableId() {
         val repo = repository(); add(repo)
@@ -91,6 +130,17 @@ class LocalCoursesTest {
         assertEquals(2, result.localTerms.single().courses.size)
         assertEquals(listOf(2), result.localTerms.single().courses.find { it.id == c.id }!!.occurrences.map { it.week })
         assertEquals("调课", result.display()!!.weeks[2].courses[0].name)
+    }
+    @Test fun customEditChangesOnlyClickedOccurrenceAndPreservesTargetWeekOriginal() {
+        val repo = repository(); add(repo)
+        val source = repo.snapshot().display()!!.weeks[0].courses.single()
+        val context = repo.snapshot().courseEditor(source)
+        val result = repo.edit(context, draft(context, name = "移动后的安排", target = listOf(2), day = 5))
+        val targetMonday = LocalDate.parse(context.firstMonday).plusWeeks(1)
+        assertTrue(result.display()!!.weeks[0].courses.none { it.source == CourseSource.CUSTOM })
+        assertEquals(2, result.display()!!.weeks[1].courses.size)
+        assertTrue(result.display()!!.weeks[1].courses.any { it.date == targetMonday.plusDays(1).toString() && it.lessons == source.lessons })
+        assertTrue(result.display()!!.weeks[1].courses.any { it.date == targetMonday.plusDays(4).toString() && it.name == "移动后的安排" })
     }
     @Test fun invalidInputAndStaleDraftNeverOverwriteData() {
         val repo = repository(); val context = repo.snapshot().courseEditor()
@@ -236,18 +286,27 @@ class LocalCoursesTest {
         assertEquals(result, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
     }
     @Test fun capacitySplitDeduplicatesTargetsAlreadyInRetainedRecord() {
-        val repo = repository(); val before = addSixtyWeekCourse(repo)
+        val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys()
+        val cipher = AesGcmVaultCipher(keys)
+        val originalOccurrences = buildList {
+            add(CustomOccurrence(1, 1, listOf(1, 2)))
+            (2..60).forEach { add(CustomOccurrence(it, 1, listOf(3, 4))) }
+            (1..60).forEach { week -> (2..7).forEach { day -> add(CustomOccurrence(week, day, listOf(1, 2))) } }
+        }
+        val initial = ScheduleData(localTerms = listOf(LocalScheduleTerm(
+            id = "capacity-term", firstMonday = "2026-11-02", weekCount = 60,
+            courses = listOf(CustomCourse("capacity-course", "自定义实验", occurrences = originalOccurrences)))),
+            selectedLocalTermId = "capacity-term")
+        store.bytes = cipher.encrypt(kotlinx.serialization.json.Json.encodeToString(ScheduleData.serializer(), initial).encodeToByteArray())
+        val repo = repository(store, keys); val before = repo.snapshot()
         val original = before.localTerms.single().courses.single()
         val context = before.courseEditor(before.display()!!.weeks[0].courses.first())
-        val filled = repo.edit(context, draft(context, source = (1..60).toList(), target = (1..60).toList(), day = 1))
-        assertEquals(original.id, filled.localTerms.single().courses.single().id)
-        val monday = filled.display()!!.weeks[0].courses.single { it.lessons == listOf(3, 4) }
-        val edit = filled.courseEditor(monday)
-        val result = repo.edit(edit, draft(edit, target = (1..60).toList()).copy(weekdays = listOf(1, 2)))
+        val result = repo.edit(context, draft(context, target = (1..60).toList(), day = 1, lessons = listOf(3, 4))
+            .copy(weekdays = listOf(1, 2)))
         val courses = result.localTerms.single().courses
         val added = courses.single { it.id != original.id }
-        assertEquals(listOf(CustomOccurrence(1, 1, listOf(3, 4))) + (1..60).map { CustomOccurrence(it, 2, listOf(3, 4)) },
-            added.occurrences)
+        assertEquals(listOf(CustomOccurrence(1, 1, listOf(3, 4))) +
+            (1..60).map { CustomOccurrence(it, 2, listOf(3, 4)) }, added.occurrences)
         val all = courses.flatMap { it.occurrences }
         assertEquals(480, all.size); assertEquals(all.size, all.distinct().size)
         assertEquals(419, courses.single { it.id == original.id }.occurrences.size)

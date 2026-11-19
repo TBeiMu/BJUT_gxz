@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import androidx.compose.runtime.saveable.mapSaver
+import io.github.tbeimu.gongxiaozhu.schedule.CourseOriginalArrangement
 import io.github.tbeimu.gongxiaozhu.schedule.bjutLessonTime
 
 /** A first tap is already a valid single lesson; the second closes the inclusive range. */
@@ -10,7 +11,7 @@ internal data class CourseLessonSelection(
     val changed: Boolean = false,
 ) {
     fun select(lesson: Int): CourseLessonSelection {
-        require(lesson in 1..20)
+        require(lesson in 1..12)
         return if (anchor == null) CourseLessonSelection(listOf(lesson), lesson, true)
         else CourseLessonSelection((minOf(anchor, lesson)..maxOf(anchor, lesson)).toList(), changed = true)
     }
@@ -22,39 +23,31 @@ internal data class CourseLessonSelection(
             ) },
             restore = { value -> CourseLessonSelection(
                 (value["lessons"] as List<*>).filterIsInstance<Int>(),
-                (value["anchor"] as Int).takeIf { it in 1..20 }, value["changed"] as Boolean,
+                (value["anchor"] as Int).takeIf { it in 1..12 }, value["changed"] as Boolean,
             ) },
         )
     }
 }
 
-/** Keep normal batch edits in their original weeks until the user explicitly changes the target. */
+/** Keep the original range visible while using one resulting-week selection. */
 internal data class CourseWeekSelection(
     val sourceWeeks: List<Int>,
     val targetWeeks: List<Int>,
-    val targetsEdited: Boolean = false,
 ) {
-    fun withSources(selected: List<Int>, weekCount: Int): CourseWeekSelection {
-        val sources = selected.distinct().sorted()
-        return copy(sourceWeeks = sources,
-            targetWeeks = if (targetsEdited) targetWeeks else sources.filter { it in 1..weekCount })
-    }
-
     fun withTargets(selected: List<Int>): CourseWeekSelection =
-        copy(targetWeeks = selected.distinct().sorted(), targetsEdited = true)
+        copy(targetWeeks = selected.distinct().sorted())
 
-    fun fitTerm(weekCount: Int): CourseWeekSelection =
-        if (weekCount in 1..60) copy(targetWeeks = targetWeeks.filter { it in 1..weekCount }) else this
+    fun fitTerm(weekCount: Int, preservedWeeks: List<Int> = sourceWeeks): CourseWeekSelection =
+        if (weekCount in 1..60) copy(targetWeeks = targetWeeks.filter { it in 1..weekCount || it in preservedWeeks }) else this
 
     companion object {
         val Saver = mapSaver(
             save = { value: CourseWeekSelection -> mapOf(
                 "sources" to ArrayList(value.sourceWeeks), "targets" to ArrayList(value.targetWeeks),
-                "targetsEdited" to value.targetsEdited,
             ) },
             restore = { value -> CourseWeekSelection(
                 (value["sources"] as List<*>).filterIsInstance<Int>(),
-                (value["targets"] as List<*>).filterIsInstance<Int>(), value["targetsEdited"] as Boolean,
+                (value["targets"] as List<*>).filterIsInstance<Int>(),
             ) },
         )
     }
@@ -98,6 +91,16 @@ internal fun courseWeekSummary(weeks: List<Int>): String {
 
 internal fun courseLessonSummary(lessons: List<Int>): String =
     "第 " + numberRanges(lessons).joinToString("、") + " 节"
+
+internal fun courseOriginalScheduleSummary(arrangements: List<CourseOriginalArrangement>): String {
+    val grouped = arrangements.groupBy { it.weekday to it.lessons.distinct().sorted() }
+        .map { (key, values) -> key to values.map { it.week }.distinct().sorted() }
+        .sortedWith(compareBy({ it.first.first }, { it.first.second.firstOrNull() ?: 0 }))
+    val days = listOf("一", "二", "三", "四", "五", "六", "日")
+    return "原有安排：" + grouped.joinToString("；") { (key, weeks) ->
+        "第 " + numberRanges(weeks).joinToString("、") + " 周 · 周" + days[key.first - 1] + " · " + courseLessonSummary(key.second)
+    }
+}
 
 /** A continuous time interval must not imply teaching during gaps or invent times after lesson 12. */
 internal fun courseLessonClock(lessons: List<Int>): String? {

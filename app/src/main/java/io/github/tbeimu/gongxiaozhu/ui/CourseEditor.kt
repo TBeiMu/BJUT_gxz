@@ -48,7 +48,7 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var nameTouched by rememberSaveable(context.token) { mutableStateOf(false) }
     var weekdays by rememberSaveable(context.token) { mutableStateOf(listOf(context.defaultWeekday)) }
     var selectedWeeks by rememberSaveable(context.token, stateSaver = CourseWeekSelection.Saver) {
-        mutableStateOf(CourseWeekSelection(listOf(context.defaultWeek), listOf(context.defaultWeek).filter { it <= context.weekCount }))
+        mutableStateOf(CourseWeekSelection(listOf(context.defaultWeek), listOf(context.defaultWeek)))
     }
     var selectedLessons by rememberSaveable(context.token, stateSaver = CourseLessonSelection.Saver) {
         mutableStateOf(CourseLessonSelection(course?.lessons ?: listOf(1, 2)))
@@ -59,19 +59,24 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
     var picker by rememberSaveable(context.token) { mutableStateOf(false) }
     val newTerm = context.creatingTerm
     val weeks = count.toIntOrNull()?.takeIf { it in 1..60 } ?: 0
-    val validSources = course == null || (selectedWeeks.sourceWeeks.isNotEmpty() &&
-        selectedWeeks.sourceWeeks.all { it in context.availableWeeks })
-    val valid = validSources && name.isNotBlank() && weeks > 0 && weekdays.isNotEmpty() &&
-        selectedWeeks.targetWeeks.isNotEmpty() && selectedWeeks.targetWeeks.all { it in 1..weeks } &&
+    val originalWeeks = context.originalArrangements.map { it.week }.distinct()
+    val preservesLateLessons = course?.lessons?.any { it !in 1..12 } == true && selectedLessons.lessons == course.lessons
+    val valid = name.isNotBlank() && weeks > 0 && weekdays.isNotEmpty() &&
+        selectedWeeks.targetWeeks.isNotEmpty() && selectedWeeks.targetWeeks.all {
+            it in 1..weeks || it in originalWeeks
+        } &&
+        (!preservesLateLessons || (selectedWeeks.targetWeeks == listOf(context.defaultWeek) &&
+            weekdays == listOf(context.defaultWeekday))) &&
         selectedLessons.lessons.isNotEmpty() &&
         runCatching { LocalDate.parse(monday).dayOfWeek.value == 1 }.getOrDefault(false)
-    fun draft() = CourseDraft(name, location, teacher, weekdays, selectedWeeks.sourceWeeks,
-        selectedWeeks.targetWeeks, selectedLessons.lessons, monday, weeks)
-    fun confirmWeekCount() { selectedWeeks = selectedWeeks.fitTerm(count.toIntOrNull() ?: 0) }
+    fun draft() = CourseDraft(name, location, teacher, weekdays,
+        if (course != null) selectedWeeks.sourceWeeks else emptyList(), selectedWeeks.targetWeeks,
+        selectedLessons.lessons, monday, weeks)
+    fun confirmWeekCount() { selectedWeeks = selectedWeeks.fitTerm(count.toIntOrNull() ?: 0, originalWeeks) }
 
     if (context.deleteOnly) {
         CourseDeleteDialog(context, selectedWeeks.sourceWeeks, saving, error, onDismiss,
-            { selectedWeeks = selectedWeeks.withSources(it, weeks) }, { onSave(draft()) })
+            { selectedWeeks = selectedWeeks.copy(sourceWeeks = it.distinct().sorted()) }, { onSave(draft()) })
         return
     }
 
@@ -145,25 +150,24 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
                     style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..20).forEach { lesson ->
+                (1..12).forEach { lesson ->
                     EditorChoice("$lesson", lesson in selectedLessons.lessons, !saving, "course_lesson_$lesson",
                         description = "第 $lesson 节") { focus.clearFocus(); selectedLessons = selectedLessons.select(lesson) }
                 }
             }
         }
         if (course != null) {
-            EditorSection("原安排范围", "${selectedWeeks.sourceWeeks.size} 周") {
-                Text("周" + listOf("一", "二", "三", "四", "五", "六", "日")[context.defaultWeekday - 1] + " · " +
-                    courseLessonSummary(course.lessons), style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-                EditorWeekChoices(context.availableWeeks, selectedWeeks.sourceWeeks, !saving, "source_week",
-                    onChange = { focus.clearFocus(); selectedWeeks = selectedWeeks.withSources(it, weeks) })
-                if (!validSources) EditorError("请选择要修改的原安排")
+            val original = context.originalArrangements.ifEmpty {
+                listOf(CourseOriginalArrangement(context.defaultWeek, context.defaultWeekday, course.lessons))
             }
+            Text(courseOriginalScheduleSummary(original), Modifier.testTag("course_original_schedule"),
+                style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
         }
-        EditorSection(if (course == null) "上课周次" else "调整后的周次", "${selectedWeeks.targetWeeks.size} 周") {
+        EditorSection("上课周次", "${selectedWeeks.targetWeeks.size} 周") {
             if (weeks == 0) Text("请先设置有效学期周数", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
             else {
-                EditorWeekChoices((1..weeks).toList(), selectedWeeks.targetWeeks, !saving, "target_week",
+                val availableWeeks = ((1..weeks).toList() + originalWeeks).distinct().sorted()
+                EditorWeekChoices(availableWeeks, selectedWeeks.targetWeeks, !saving, "target_week",
                     onChange = { focus.clearFocus(); selectedWeeks = selectedWeeks.withTargets(it) })
                 if (selectedWeeks.targetWeeks.isEmpty()) EditorError("请至少选择一个上课周次")
             }

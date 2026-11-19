@@ -9,6 +9,11 @@ on:
         description: 已存在的版本标签，例如 v0.1.0
         required: true
         type: string
+      replace_existing:
+        description: 用户明确要求同版本修订时替换已有 Release 附件；相同 versionCode 不会触发应用内更新
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,6 +26,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Updating a tag used for a user-requested same-version replacement must not
+    # start an implicit second release job; dispatch it with replace_existing=true.
+    if: github.event_name != 'push' || github.event.created == true
     permissions:
       contents: write
     env:
@@ -103,15 +111,24 @@ jobs:
       - name: 发布 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPLACE_EXISTING: ${{ inputs.replace_existing }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo '该版本已发布，拒绝覆盖历史 APK；请使用新版本号。'
-            exit 1
+            if [[ "$REPLACE_EXISTING" != 'true' ]]; then
+              echo '该版本已发布；仅在明确选择同版本替换时才更新附件。'
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" --clobber \
+              "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt" \
+              "$RUNNER_TEMP/release-assets/update.json"
+            gh release edit "$RELEASE_TAG" --latest --title "工小助 $RELEASE_TAG" \
+              --notes-file "docs/releases/$RELEASE_TAG.md"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --latest --title "工小助 $RELEASE_TAG" \
+              --notes-file "docs/releases/$RELEASE_TAG.md" \
+              "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt" \
+              "$RUNNER_TEMP/release-assets/update.json"
           fi
-          gh release create "$RELEASE_TAG" --verify-tag --latest --title "工小助 $RELEASE_TAG" \
-            --notes-file "docs/releases/$RELEASE_TAG.md" \
-            "$RUNNER_TEMP/release-assets/gongxiaozhu.apk" "$RUNNER_TEMP/release-assets/SHA256SUMS.txt" \
-            "$RUNNER_TEMP/release-assets/update.json"
       - name: 清理临时签名文件
         if: always()
         run: rm -f -- "$RUNNER_TEMP/gongxiaozhu-release.p12"

@@ -56,7 +56,9 @@ class CourseValidationException(message: String) : Exception(message)
 data class CourseEditContext(val token: String = UUID.randomUUID().toString(), val expected: ScheduleData,
     val localTermId: String?, val course: ScheduleCourse?, val availableWeeks: List<Int>,
     val defaultWeek: Int, val defaultWeekday: Int, val firstMonday: String, val weekCount: Int,
-    val deleteOnly: Boolean = false, val creatingTerm: Boolean = false)
+    val deleteOnly: Boolean = false, val creatingTerm: Boolean = false,
+    val originalArrangements: List<CourseOriginalArrangement> = emptyList())
+data class CourseOriginalArrangement(val week: Int, val weekday: Int, val lessons: List<Int>)
 data class CourseDraft(val name: String, val location: String, val teacher: String, val weekdays: List<Int>,
     val sourceWeeks: List<Int>, val targetWeeks: List<Int>, val lessons: List<Int>,
     val firstMonday: String, val weekCount: Int)
@@ -65,6 +67,9 @@ private fun ScheduleCourse.sameSeries(other: ScheduleCourse): Boolean = source =
     name == other.name && location == other.location && teacher == other.teacher && lessons == other.lessons &&
     LocalDate.parse(date).dayOfWeek == LocalDate.parse(other.date).dayOfWeek
 
+private fun ScheduleCourse.sameOccurrence(other: ScheduleCourse): Boolean = source == other.source && id == other.id &&
+    date == other.date && lessons.distinct().sorted() == other.lessons.distinct().sorted()
+
 fun ScheduleData.courseEditor(course: ScheduleCourse? = null, week: Int = 1, weekday: Int = scheduleToday().dayOfWeek.value,
     termId: String? = null, deleteOnly: Boolean = false, newLocalTerm: Boolean = false): CourseEditContext {
     val local = localTerms.find { it.id == termId }
@@ -72,16 +77,25 @@ fun ScheduleData.courseEditor(course: ScheduleCourse? = null, week: Int = 1, wee
     val weekNumber = course?.let { c -> if (local != null) (java.time.temporal.ChronoUnit.DAYS.between(
         LocalDate.parse(local.firstMonday), LocalDate.parse(c.date)) / 7).toInt() + 1
         else view?.weeks?.find { c.date in it.dates }?.number } ?: week
+    val courseWeekday = course?.let { LocalDate.parse(it.date).dayOfWeek.value } ?: weekday
     val available = course?.let { c -> if (c.source == CourseSource.CUSTOM && local != null)
-        local.courses.find { it.id == c.id }?.occurrences.orEmpty().filter { it.weekday == weekday && it.lessons == c.lessons }.map { it.week }.distinct()
+        local.courses.find { it.id == c.id }?.occurrences.orEmpty().filter { it.weekday == courseWeekday && it.lessons == c.lessons }.map { it.week }.distinct()
         else view?.weeks.orEmpty().filter { w -> w.courses.any { it.sameSeries(c) } }.map { it.number } }
         ?: emptyList()
+    val originalArrangements = course?.let { c -> if (c.source == CourseSource.CUSTOM && local != null) {
+        local.courses.find { it.id == c.id }?.occurrences.orEmpty()
+            .map { CourseOriginalArrangement(it.week, it.weekday, it.lessons.distinct().sorted()) }
+    } else view?.weeks.orEmpty().flatMap { w -> w.courses.filter { original ->
+        original.source == c.source && original.id == c.id && original.date in w.dates
+    }.map { CourseOriginalArrangement(w.number, LocalDate.parse(it.date).dayOfWeek.value, it.lessons.distinct().sorted()) } } }?.distinct()
+        ?.sortedWith(compareBy({ it.week }, { it.lessons.firstOrNull() ?: 0 })) ?: emptyList()
     val count = view?.term?.weekCount ?: 20
     return CourseEditContext(expected = this, localTermId = local?.id ?: view?.localTermId, course = course,
         availableWeeks = available, defaultWeek = if (course == null) weekNumber.coerceIn(1, count) else weekNumber,
-        defaultWeekday = course?.let { LocalDate.parse(it.date).dayOfWeek.value } ?: weekday,
+        defaultWeekday = courseWeekday,
         firstMonday = view?.weeks?.first()?.dates?.first() ?: scheduleToday().with(java.time.DayOfWeek.MONDAY).toString(),
-        weekCount = count, deleteOnly = deleteOnly, creatingTerm = newLocalTerm || view == null)
+        weekCount = count, deleteOnly = deleteOnly, creatingTerm = newLocalTerm || view == null,
+        originalArrangements = originalArrangements)
 }
 
 internal fun validateLocalTerms(data: ScheduleData) {
@@ -107,26 +121,44 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     fun check(value: Boolean, message: String) { if (!value) throw CourseValidationException(message) }
     check(this == context.expected, "课表已变化，请关闭后重新编辑")
     val source = context.course
-    check(source == null || (draft.sourceWeeks.isNotEmpty() && draft.sourceWeeks.all { it in context.availableWeeks }), "请选择原安排范围")
+    if (source != null) {
+        val validSourceWeeks = if (context.deleteOnly) draft.sourceWeeks.isNotEmpty() &&
+            draft.sourceWeeks.all { it in context.availableWeeks }
+        else draft.sourceWeeks == listOf(context.defaultWeek)
+        check(validSourceWeeks, if (context.deleteOnly) "请选择原安排范围" else "编辑时只能替换点击的本次安排")
+    }
     if (!context.deleteOnly) {
         check(draft.name.isNotBlank() && draft.name.length <= 300, "请填写课程名（最多 300 字）")
         check(draft.location.length <= 500 && draft.teacher.length <= 500, "教室或教师信息过长")
         check(draft.weekdays.isNotEmpty() && draft.weekdays.all { it in 1..7 } &&
             draft.weekdays.distinct().size == draft.weekdays.size && draft.weekCount in 1..60, "请选择有效星期和学期周数")
         check(source?.source != CourseSource.SCHOOL || draft.weekdays.size == 1, "学校课程调课请选择一个星期")
-        check(draft.targetWeeks.isNotEmpty() && draft.targetWeeks.all { it in 1..draft.weekCount }, "请选择有效上课周次")
-        check(draft.lessons.isNotEmpty() && draft.lessons.distinct().size == draft.lessons.size && draft.lessons.all { it in 1..20 }, "节次范围须为第 1–20 节")
+        check(draft.targetWeeks.isNotEmpty() && draft.targetWeeks.all {
+            it in 1..draft.weekCount || it in context.originalArrangements.map { arrangement -> arrangement.week }
+        }, "请选择有效上课周次")
+        val keepsOriginalLateLessons = source != null && draft.lessons == source.lessons
+        check(draft.lessons.isNotEmpty() && draft.lessons.distinct().size == draft.lessons.size &&
+            (draft.lessons.all { it in 1..12 } || keepsOriginalLateLessons), "节次只能选择第 1–12 节")
+        check(!keepsOriginalLateLessons || draft.lessons.all { it in 1..12 } ||
+            (draft.targetWeeks == listOf(context.defaultWeek) && draft.weekdays == listOf(context.defaultWeekday)),
+            "原有第 13 节及以后的安排只能保留在原周次和星期")
         check(context.creatingTerm || (draft.firstMonday == context.firstMonday && draft.weekCount == context.weekCount), "学期已变化，请重新编辑")
     }
     if (source?.source == CourseSource.SCHOOL) {
         val school = complete ?: throw CourseValidationException("学校课表已变化，请重新编辑")
         check(draft.weekCount == school.term.weekCount, "学校学期已变化，请重新编辑")
         val monday = LocalDate.parse(school.weeks.first().dates.first())
-        val weeks = school.weeks.map { w -> w.copy(courses = w.courses.filterNot {
-            w.number in draft.sourceWeeks && it.sameSeries(source)
-        } + if (!context.deleteOnly && w.number in draft.targetWeeks) listOf(source.copy(name = draft.name.trim(),
-            location = draft.location.trim(), teacher = draft.teacher.trim(), lessons = draft.lessons.sorted(),
-            date = monday.plusWeeks(w.number - 1L).plusDays(draft.weekdays.single() - 1L).toString(), timeText = "", weeksText = "第 ${w.number} 周")) else emptyList()) }
+        val weeks = school.weeks.map { w ->
+            val retained = w.courses.filterNot { w.number in draft.sourceWeeks && it.sameSeries(source) }
+            val additions = if (!context.deleteOnly && w.number in draft.targetWeeks) {
+                val target = source.copy(name = draft.name.trim(), location = draft.location.trim(), teacher = draft.teacher.trim(),
+                    lessons = draft.lessons.sorted(),
+                    date = monday.plusWeeks(w.number - 1L).plusDays(draft.weekdays.single() - 1L).toString(),
+                    timeText = "", weeksText = "第 ${w.number} 周")
+                if (retained.any { it.sameOccurrence(target) }) emptyList() else listOf(target)
+            } else emptyList()
+            w.copy(courses = retained + additions)
+        }
         return copy(complete = school.copy(weeks = weeks))
     }
     var local = localTerms.find { it.id == context.localTermId }
@@ -153,10 +185,10 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
     // A partial edit can add a second interval on an existing day. Keep each record bounded;
     // when it no longer fits, preserve the original ID and store only new targets separately.
     val retainedSet = retained.toSet()
-    val newOccurrences = if (sameContent) added.filterNot { it in retainedSet } else added
+    val newOccurrences = added.filterNot { it in retainedSet }
     val courses = if (!context.deleteOnly && sameContent && merged.size <= MAX_CUSTOM_OCCURRENCES)
         local.courses.filterNot { it.id == old!!.id } + old!!.copy(occurrences = merged)
-    else remaining + if (context.deleteOnly) emptyList() else listOf(CustomCourse(
+    else remaining + if (context.deleteOnly || newOccurrences.isEmpty()) emptyList() else listOf(CustomCourse(
         if (retained.isEmpty() && old != null) old.id else UUID.randomUUID().toString(), draft.name.trim(), draft.location.trim(),
         draft.teacher.trim(), newOccurrences))
     check(courses.size <= MAX_CUSTOM_COURSES, "本地课程数量已达上限（$MAX_CUSTOM_COURSES 条），请删除不需要的课程后再保存")

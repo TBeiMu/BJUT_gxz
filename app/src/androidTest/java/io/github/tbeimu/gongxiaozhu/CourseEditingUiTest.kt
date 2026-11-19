@@ -147,13 +147,14 @@ class CourseEditingUiTest {
         } }
         compose.onNodeWithTag("course_name").performTextInput("大字课程")
         compose.onNodeWithTag("save_course").assertIsDisplayed()
-        compose.onNodeWithTag("course_lesson_20").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_12").performScrollTo().performClick()
         compose.onNodeWithTag("save_course").assertIsEnabled()
         compose.onNodeWithTag("course_lesson_1").performScrollTo().performClick()
-        compose.onNodeWithTag("course_lesson_10").assertIsSelected()
-        compose.onNodeWithTag("course_lesson_20").performScrollTo().performClick()
-        compose.onNodeWithTag("course_lesson_20").assertIsSelected()
+        compose.onNodeWithTag("course_lesson_12").assertIsSelected()
+        compose.onNodeWithTag("course_lesson_12").performScrollTo().performClick()
+        compose.onNodeWithTag("course_lesson_12").assertIsSelected()
         compose.onNodeWithTag("course_lesson_1").assertIsNotSelected()
+        compose.onNodeWithTag("course_lesson_13").assertDoesNotExist()
         compose.onNodeWithTag("save_course").assertIsEnabled()
         val selectedDay = context.defaultWeekday
         compose.onNodeWithTag("course_day_$selectedDay").performScrollTo().performClick()
@@ -194,25 +195,21 @@ class CourseEditingUiTest {
         assertEquals(listOf(1, 3), saved!!.targetWeeks)
         assertEquals(3, saved!!.weekCount)
     }
-    @Test fun editingSourceWeeksFollowsUntilExplicitTargetChange() {
+    @Test fun editingShowsAllOriginalWeeksAndLessonsWithOneEditableWeekSelection() {
         var saved: CourseDraft? = null
         val data = schoolData()
         val edit = data.courseEditor(data.complete!!.weeks[0].courses.single())
         val restoration = StateRestorationTester(compose)
         restoration.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
-        compose.onNodeWithTag("source_week_all").performScrollTo().performClick()
+        compose.onNodeWithTag("course_original_schedule").assertTextEquals("原有安排：第 1–2 周 · 周一 · 第 1–2 节")
+        compose.onNodeWithTag("source_week_all").assertDoesNotExist()
         compose.onNodeWithTag("target_week_1").assertIsSelected()
-        compose.onNodeWithTag("target_week_2").assertIsSelected()
-        compose.onNodeWithTag("save_course").performClick()
-        assertEquals(listOf(1, 2), saved!!.sourceWeeks)
-        assertEquals(listOf(1, 2), saved!!.targetWeeks)
+        compose.onNodeWithTag("target_week_2").assertIsNotSelected()
         compose.onNodeWithTag("target_week_1").performScrollTo().performClick()
+        compose.onNodeWithTag("target_week_2").performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("source_week_clear").performScrollTo().performClick()
-        compose.onNodeWithTag("save_course").assertIsNotEnabled()
-        compose.onNodeWithTag("source_week_1").performScrollTo().performClick()
-        compose.onNodeWithTag("target_week_2").assertIsSelected()
         compose.onNodeWithTag("target_week_1").assertIsNotSelected()
+        compose.onNodeWithTag("target_week_2").assertIsSelected()
         compose.onNodeWithTag("save_course").performClick()
         assertEquals(listOf(1), saved!!.sourceWeeks)
         assertEquals(listOf(2), saved!!.targetWeeks)
@@ -237,6 +234,24 @@ class CourseEditingUiTest {
         compose.onNodeWithTag("save_course").performClick()
         assertEquals(listOf(5, 6, 7), saved!!.lessons)
         capture("course_editor", "editor-range")
+    }
+    @Test fun importedLessonsAboveTwelveAreShownAndMustBeReplacedBeforeMoving() {
+        var saved: CourseDraft? = null
+        val original = schoolData()
+        val data = original.copy(complete = original.complete!!.copy(weeks = original.complete.weeks.map { week ->
+            week.copy(courses = week.courses.map { it.copy(lessons = listOf(13, 14)) })
+        }))
+        val edit = data.courseEditor(data.complete!!.weeks[0].courses.single())
+        compose.setContent { GongXiaoZhuTheme { CourseEditor(edit, false, null, {}, { saved = it }) } }
+        compose.onNodeWithTag("course_lesson_13").assertDoesNotExist()
+        compose.onNodeWithTag("course_original_schedule").assertTextEquals("原有安排：第 1–2 周 · 周一 · 第 13–14 节")
+        compose.onNodeWithTag("save_course").assertIsEnabled()
+        compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsNotEnabled()
+        compose.onNodeWithTag("course_lesson_1").performScrollTo().performClick()
+        compose.onNodeWithTag("save_course").assertIsEnabled()
+        compose.onNodeWithTag("save_course").performClick()
+        assertEquals(listOf(1), saved!!.lessons)
     }
     @Test fun savingDisablesActionsAndFailureKeepsDraftForRetry() {
         var saving by mutableStateOf(false)
