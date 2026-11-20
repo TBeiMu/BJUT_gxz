@@ -60,6 +60,8 @@ class CampusLoginRuntime private constructor(context: Context) {
                 monitor.connections.collect {
                     wifi.value = WifiObservation.Current(it)
                     controller.wifiChanged(it)
+                    // Restoring the same WiFi can renew authentication without changing LoginUiState.
+                    accountNames.authenticationChanged()
                     connectionNotice.resumeObservation(controller.state.value)
                 }
             }

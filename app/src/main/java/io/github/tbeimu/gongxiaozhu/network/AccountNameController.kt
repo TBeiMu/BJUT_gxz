@@ -84,7 +84,10 @@ class AccountNameController(private val scope: CoroutineScope, private val accou
             if (failedWrites.isEmpty()) mutableWriteFailure.value = false
         }
         val current = data?.accounts?.find { it.id == activeAccount }
+        val queuedLookupLostAuthentication = current?.nameLookupPending == true &&
+            activeNetwork?.let { !networkAuthenticated(it) } == true
         if (job != null && (blocked || current == null || !current.canFillName || editing == activeAccount ||
+                queuedLookupLostAuthentication ||
                 (activeNetwork != null && (!foreground || wifi?.key != activeNetwork)))) {
             generation++; job?.cancel()
         }
@@ -102,13 +105,16 @@ class AccountNameController(private val scope: CoroutineScope, private val accou
         }
         if (!foreground || !scheduleReady) return
         val selected = wifi ?: return
-        if (!selected.internetValidated && !networkAuthenticated(selected.key)) return
+        if (!networkAuthenticated(selected.key)) return
         val lookup = selected.nameLookup ?: return
         val next = data.accounts.firstOrNull { it.nameLookupPending && it.canFillName &&
             it.id !in changingAccounts && it.id !in failedWrites } ?: return
         launch(next.id, selected.key) { isCurrent ->
+            if (!networkAuthenticated(selected.key)) return@launch
             val account = withContext(io) { accounts.beginNameLookup(next.id, isCurrent) } ?: return@launch
             currentCoroutineContext().ensureActive()
+            // The once-only marker may finish on IO after authentication was invalidated.
+            if (!networkAuthenticated(selected.key)) return@launch
             val result = withTimeoutOrNull(30_000) { lookup.lookup(account) } ?: return@launch
             currentCoroutineContext().ensureActive()
             withContext(io) { accounts.completeNameLookup(account, result.studentId, result.name, isCurrent) }
