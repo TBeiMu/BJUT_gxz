@@ -72,4 +72,5 @@ class AndroidVaultStore(context: Context, filename: String = "accounts.vault") :
 
 fun createAccountRepository(context: Context): AccountRepository = AccountRepository(
     AndroidVaultStore(context.applicationContext), AesGcmVaultCipher(AndroidVaultKeySource()),
+    currentVersionCode = io.github.tbeimu.gongxiaozhu.BuildConfig.VERSION_CODE,
 )

@@ -5,9 +5,14 @@ import android.content.ContextWrapper
 import android.content.ActivityNotFoundException
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
+import androidx.compose.runtime.saveable.SaveableStateRegistry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -16,6 +21,7 @@ import io.github.tbeimu.gongxiaozhu.network.CampusLoginService
 import io.github.tbeimu.gongxiaozhu.update.UpdateDownloadService
 import io.github.tbeimu.gongxiaozhu.ui.AppViewModel
 import io.github.tbeimu.gongxiaozhu.ui.GongXiaoZhuApp
+import io.github.tbeimu.gongxiaozhu.ui.MyDestination
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
 import org.junit.Rule
@@ -94,7 +100,9 @@ class MyNavigationTest {
         compose.onNodeWithText("你的北工大校园助手").assertDoesNotExist()
         compose.onNodeWithText("检查更新").assertExists()
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
-        listOf("SHUTTLE","SCHEDULE","ACCOUNTS","NETWORK","APPEARANCE","ABOUT").forEach { key ->
+        compose.onNodeWithTag("my_ACCOUNTS").assertDoesNotExist()
+        compose.onAllNodesWithText("校园网", substring = false).assertCountEquals(1)
+        listOf("SHUTTLE","SCHEDULE","NETWORK","APPEARANCE","ABOUT").forEach { key ->
             compose.onNodeWithTag("my_$key").performScrollTo().performClick()
             compose.onNodeWithText("资费",substring=false).assertExists()
             compose.onNodeWithContentDescription("返回").performClick()
@@ -142,5 +150,154 @@ class MyNavigationTest {
         compose.onNodeWithTag("login_button").assertExists()
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("my_NETWORK").assertExists()
+    }
+
+    @Test fun billingAccountManagementKeepsItsSectionThroughRotationAndBothBackPaths() {
+        compose.onNodeWithText("资费", substring = false).performClick()
+        openBillingAccounts()
+        compose.onNodeWithTag("campus_accounts").assertIsDisplayed()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("campus_accounts").assertIsDisplayed()
+        compose.onNodeWithTag("campus_add_account").assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("metric_已用流量").assertExists()
+        compose.onNodeWithTag("campus_network_list").assertDoesNotExist()
+        openBillingAccounts()
+        compose.onNodeWithTag("campus_accounts").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("metric_已用流量").assertExists()
+        compose.onNodeWithTag("campus_network_list").assertDoesNotExist()
+    }
+
+    @Test fun mineOpensConnectionAndNotificationReentryResetsOnlyTheRequestedPosition() {
+        compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithTag("my_NETWORK").performScrollTo().performClick()
+        compose.onNodeWithTag("campus_connection").assertIsDisplayed()
+        compose.onNodeWithTag("login_button").assertIsDisplayed()
+        val list = compose.onNodeWithTag("campus_network_list")
+        list.performScrollToNode(hasTestTag("campus_settings_toggle"))
+        compose.onNodeWithTag("campus_settings_toggle").performScrollTo().performClick()
+        list.performScrollToNode(hasContentDescription("网络模式：宿舍 WiFi"))
+        compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").performScrollTo().assertIsDisplayed()
+        val beforeRotation = compose.onNodeWithTag("campus_settings_toggle").fetchSemanticsNode().boundsInRoot
+        val beforeDiagnostic = campusPositionDiagnostic()
+        campusPositionPreview("before-rotation")
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("campus_settings").assertExists()
+        compose.onNodeWithContentDescription("网络模式：宿舍 WiFi").assertIsDisplayed()
+        val restored = compose.onNodeWithTag("campus_settings_toggle").fetchSemanticsNode().boundsInRoot
+        val afterDiagnostic = campusPositionDiagnostic()
+        campusPositionPreview("after-rotation")
+        val diagnostic = "Before: $beforeDiagnostic; after: $afterDiagnostic"
+        assertEquals(diagnostic, beforeRotation.top, restored.top, 1f)
+        assertEquals(diagnostic, beforeRotation.bottom, restored.bottom, 1f)
+        openLoginNotification()
+        compose.onNodeWithTag("campus_connection").assertIsDisplayed()
+        compose.onNodeWithTag("login_button").assertIsDisplayed()
+        // A second notification is a new request even while the merged page is already open.
+        list.performScrollToNode(hasTestTag("campus_settings_toggle"))
+        compose.onNodeWithTag("campus_settings_toggle").performScrollTo().assertIsDisplayed()
+        openLoginNotification()
+        compose.onNodeWithTag("campus_connection").assertIsDisplayed()
+        compose.onNodeWithTag("login_button").assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("my_NETWORK").assertExists()
+        compose.onNodeWithTag("my_github").assertIsDisplayed()
+    }
+
+    @Test fun legacySavedAccountDestinationRestoresIntoTheMergedPageAndRetainsBillingOrigin() {
+        val mounted = mutableStateOf(true)
+        val registry = mutableStateOf(SaveableStateRegistry(null) { true })
+        compose.runOnUiThread {
+            val model = ViewModelProvider(compose.activity).get(AppViewModel::class.java)
+            compose.activity.setContent {
+                if (mounted.value) CompositionLocalProvider(LocalSaveableStateRegistry provides registry.value) {
+                    GongXiaoZhuApp(model)
+                }
+            }
+        }
+        compose.onNodeWithText("资费", substring = false).performClick()
+        openBillingAccounts()
+        compose.onNodeWithTag("campus_accounts").assertIsDisplayed()
+        lateinit var saved: Map<String, List<Any?>>
+        var aliases = 0
+        fun legacy(value: Any?): Any? = when (value) {
+            MyDestination.NETWORK -> { aliases++; MyDestination.ACCOUNTS }
+            is MutableState<*> -> {
+                val old = value.value
+                val replacement = legacy(old)
+                if (replacement === old) value else mutableStateOf(replacement)
+            }
+            is Map<*, *> -> value.mapValues { legacy(it.value) }
+            is List<*> -> value.map(::legacy)
+            else -> value
+        }
+        compose.runOnIdle {
+            saved = registry.value.performSave().mapValues { (_, values) -> values.map(::legacy) }
+            assertEquals("Replace the actual saved destination, not a test-only route", 1, aliases)
+            mounted.value = false
+        }
+        compose.waitForIdle()
+        compose.runOnUiThread {
+            registry.value = SaveableStateRegistry(saved) { true }
+            mounted.value = true
+        }
+        compose.onNodeWithText("校园网", substring = false).assertIsDisplayed()
+        compose.onNodeWithTag("campus_accounts").assertIsDisplayed()
+        compose.onNodeWithTag("campus_add_account").assertIsDisplayed()
+        compose.onNodeWithTag("my_ACCOUNTS").assertDoesNotExist()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("metric_已用流量").assertExists()
+        compose.onNodeWithTag("campus_network_list").assertDoesNotExist()
+    }
+
+    private fun openBillingAccounts() {
+        compose.onNodeWithTag("billing_accounts").performScrollTo().performClick()
+        compose.onNodeWithText("校园网", substring = false).assertIsDisplayed()
+    }
+
+    private fun openLoginNotification() {
+        compose.runOnUiThread {
+            // Preserve ActivityScenario's launch identity while exercising the real onNewIntent path.
+            compose.activity.startActivity(Intent(compose.activity.intent)
+                .putExtra(CampusLoginService.OPEN_LOGIN, true)
+                .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        }
+        compose.waitUntil(10_000) { compose.onNodeWithTag("login_button").isDisplayed() }
+        compose.waitForIdle()
+    }
+
+    private fun campusPositionDiagnostic(): String {
+        val list = compose.onNodeWithTag("campus_network_list").fetchSemanticsNode()
+        val range = list.config[SemanticsProperties.VerticalScrollAxisRange]
+        val toggle = compose.onNodeWithTag("campus_settings_toggle").fetchSemanticsNode().boundsInRoot
+        val focused = compose.onAllNodes(isFocused(), useUnmergedTree = true).fetchSemanticsNodes().map { node ->
+            val config = node.config
+            val tag = if (config.contains(SemanticsProperties.TestTag)) config[SemanticsProperties.TestTag] else ""
+            val text = if (config.contains(SemanticsProperties.Text)) config[SemanticsProperties.Text].joinToString { it.text } else ""
+            "$tag:$text"
+        }
+        var platform = ""
+        compose.runOnIdle {
+            val activity = compose.activity
+            val decor = activity.window.decorView
+            val insets = decor.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())
+            val state = ViewModelProvider(activity).get(AppViewModel::class.java).state.value
+            platform = "decor=${decor.width}x${decor.height}, systemBars=$insets, " +
+                "touchMode=${decor.isInTouchMode}, decorFocused=${decor.isFocused}, focused=$focused, " +
+                "notifications=${androidx.core.app.NotificationManagerCompat.from(activity).areNotificationsEnabled()}, " +
+                "running=${state.login.running}, wifiKnown=${state.login.wifiSnapshotKnown}, login=${state.login.message}"
+        }
+        return "list=${list.boundsInRoot}, toggle=$toggle, scroll=${range.value()}/${range.maxValue()}, $platform"
+    }
+
+    private fun campusPositionPreview(name: String) {
+        val inst = InstrumentationRegistry.getInstrumentation()
+        if (InstrumentationRegistry.getArguments().getString("gxzSavePreview") != "true") return
+        // This class deliberately starts with no accounts or credentials.
+        assertTrue(ViewModelProvider(compose.activity).get(AppViewModel::class.java).state.value.data.accounts.isEmpty())
+        inst.targetContext.getExternalFilesDir(null)?.resolve("campus-position-$name.png")?.outputStream()?.use {
+            compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
     }
 }

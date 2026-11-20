@@ -66,15 +66,16 @@ class AccountNameUiTest {
         reloadScheduleFixture(context)
         scenario = ActivityScenario.launch(MainActivity::class.java)
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.onNodeWithTag("my_ACCOUNTS").performClick()
-        compose.onNodeWithText("添加账号", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("my_NETWORK").performScrollTo().performClick()
+        compose.onNodeWithTag("campus_network_list").performScrollToNode(hasTestTag("campus_add_account"))
+        compose.onNodeWithTag("campus_add_account").performScrollTo().performClick()
         compose.onNodeWithTag("account_username").performTextInput(identity.studentId)
         compose.onNodeWithTag("account_password").performTextInput("fictional-password")
         compose.onNodeWithText("保存", substring = false).performClick()
         waitUntil { runtime.accounts.state.value?.defaultAccount?.label == identity.name }
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(identity.name, substring = false)).fetchSemanticsNodes().isNotEmpty() }
+        assertNameInAccountCard()
         scenario!!.recreate()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(identity.name, substring = false)).fetchSemanticsNodes().isNotEmpty() }
+        assertNameInAccountCard()
         val restored = createAccountRepository(context).load()
         assertEquals(identity.name, restored.defaultAccount!!.label)
         assertFalse(restored.defaultAccount!!.nameLookupPending)
@@ -106,7 +107,14 @@ class AccountNameUiTest {
         assertEquals(account.id, runtime.accounts.state.value!!.defaultAccountId)
         assertEquals("fictional-password", runtime.accounts.edit(account.id).password)
         compose.onNodeWithText("我的", substring = false).performClick()
-        compose.onNodeWithTag("my_ACCOUNTS").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText(identity.name, substring = false)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("my_NETWORK").performScrollTo().performClick()
+        assertNameInAccountCard()
+    }
+
+    private fun assertNameInAccountCard() {
+        val account = checkNotNull(runtime.accounts.state.value?.defaultAccount)
+        val card = hasTestTag("campus_account_${account.id}")
+        compose.onNodeWithTag("campus_network_list").performScrollToNode(card)
+        compose.onNode(hasText(identity.name, substring = false) and hasAnyAncestor(card)).assertIsDisplayed()
     }
 }

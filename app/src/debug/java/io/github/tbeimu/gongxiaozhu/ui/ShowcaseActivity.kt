@@ -80,7 +80,10 @@ class ShowcaseActivity : ComponentActivity() {
         setContent {
             GongXiaoZhuTheme { ShowcaseFont {
                 var tab by rememberSaveable { mutableStateOf(if (firstPage != null) Tab.MY else firstTab) }
-                var destination by rememberSaveable { mutableStateOf(firstPage) }
+                var destination by rememberSaveable { mutableStateOf(firstPage?.canonical) }
+                var networkSection by rememberSaveable { mutableStateOf(if (firstPage == MyDestination.ACCOUNTS)
+                    CampusNetworkSection.ACCOUNTS else CampusNetworkSection.CONNECTION) }
+                var networkEntryRequest by rememberSaveable { mutableStateOf(0L) }
                 val snackbar = remember { SnackbarHostState() }
                 val wallpaper = rememberWallpaper()
                 val updateActions = rememberUpdateActions()
@@ -103,7 +106,7 @@ class ShowcaseActivity : ComponentActivity() {
                     val page = screen.destination
                     if (page != null) MyDetailScreen(page, demo, Modifier.padding(padding), model, wallpaper,
                         onBack = { destination = null }, onResetAccounts = {}, onResetSchedule = {}, onDelete = {},
-                        updateActions = updateActions)
+                        updateActions = updateActions, networkSection = networkSection, networkEntryRequest = networkEntryRequest)
                     else when (screen.tab) {
                         Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
                             ScheduleHome(demo.schedule, Modifier, onImport = {}, onPause = {}, onRetry = {},
@@ -111,8 +114,16 @@ class ShowcaseActivity : ComponentActivity() {
                                 nowProvider = { java.time.LocalTime.of(14, 32) })
                         }
                         Tab.BILLING -> BillingScreen(demo, Modifier.padding(padding),
-                            onAccounts = { tab = Tab.MY; destination = MyDestination.ACCOUNTS }, onQuery = { refresh() }, onOffline = {})
-                        Tab.MY -> MyHomeScreen(demo, Modifier.padding(padding)) { destination = it }
+                            onAccounts = {
+                                tab = Tab.MY; networkSection = CampusNetworkSection.ACCOUNTS
+                                networkEntryRequest++; destination = MyDestination.NETWORK
+                            }, onQuery = { refresh() }, onOffline = {})
+                        Tab.MY -> MyHomeScreen(demo, Modifier.padding(padding)) {
+                            if (it == MyDestination.NETWORK) {
+                                networkSection = CampusNetworkSection.CONNECTION; networkEntryRequest++
+                            }
+                            destination = it
+                        }
                     }
                   }
                 }

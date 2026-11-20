@@ -13,7 +13,9 @@ interface VaultStore {
 }
 
 /** All state is published only after an encrypted atomic write succeeds. */
-class AccountRepository(private val store: VaultStore, private val cipher: VaultCipher) {
+class AccountRepository(private val store: VaultStore, private val cipher: VaultCipher,
+    private val currentVersionCode: Int = 1) {
+    init { require(currentVersionCode > 0) }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var vault: VaultData? = null
     private var hasPersistedVault = false
@@ -62,9 +64,10 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         val custom = if (draft.label.isBlank()) false
             else if (previous != null && previous.label == label && previous.username == username) previous.customLabel
             else true
-        val pending = if (previous == null) draft.label.isBlank() else previous.nameLookupPending &&
+        val pending = if (previous == null) draft.label.isBlank() else previous.hasNameLookupOpportunity() &&
             previous.username == username && previous.password == draft.password && custom != true
-        val saved = SavedAccount(draft.id ?: UUID.randomUUID().toString(), label, username, draft.password, custom, pending)
+        val saved = SavedAccount(draft.id ?: UUID.randomUUID().toString(), label, username, draft.password, custom, pending,
+            maxOf(previous?.nameLookupVersionCode ?: 0, currentVersionCode))
         val accounts = if (draft.id == null) current.accounts + saved else current.accounts.map {
             if (it.id == draft.id) saved else it
         }
@@ -104,15 +107,15 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
     @Synchronized
     fun settings(settings: AppSettings): AccountState = persist(requireLoaded().copy(settings = settings))
 
-    /** Consume the one-time attempt before reading credentials or starting school HTTP. */
+    /** Consume this app version's attempt before reading credentials or starting school HTTP. */
     @Synchronized
     fun beginNameLookup(id: String, isCurrent: () -> Boolean = { true }): AccountDraft? {
         if (!isCurrent()) return null
         checkPersistedState()
         val current = requireLoaded()
-        val account = current.accounts.find { it.id == id && it.nameLookupPending && it.canFillName } ?: return null
+        val account = current.accounts.find { it.id == id && it.hasNameLookupOpportunity() } ?: return null
         if (!persistName(current.copy(accounts = current.accounts.map {
-            if (it.id == id) it.copy(nameLookupPending = false) else it
+            if (it.id == id) it.copy(nameLookupPending = false, nameLookupVersionCode = currentVersionCode) else it
         }), isCurrent)) return null
         return AccountDraft(account.id, account.label, account.username, account.password)
     }
@@ -139,7 +142,8 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         val current = requireLoaded()
         val account = current.accounts.find { it.username == studentId && it.canFillName && matches(it) } ?: return false
         return persistName(current.copy(accounts = current.accounts.map {
-            if (it.id == account.id) it.copy(label = name, customLabel = false, nameLookupPending = false) else it
+            if (it.id == account.id) it.copy(label = name, customLabel = false, nameLookupPending = false,
+                nameLookupVersionCode = maxOf(it.nameLookupVersionCode, currentVersionCode)) else it
         }), isCurrent)
     }
 
@@ -209,13 +213,19 @@ class AccountRepository(private val store: VaultStore, private val cipher: Vault
         require(value.accounts.map { it.id }.distinct().size == value.accounts.size)
         require(value.accounts.map { it.username }.distinct().size == value.accounts.size)
         require(value.accounts.all { it.id.isNotBlank() && it.username.isNotBlank() && it.password.isNotEmpty() })
+        require(value.accounts.all { it.nameLookupVersionCode >= 0 })
         require(if (value.accounts.isEmpty()) value.defaultAccountId == null else {
             value.accounts.any { it.id == value.defaultAccountId }
         })
     }
 
+    // Derive renewal without migrating the encrypted file on load or bypassing stale-file checks.
+    private fun SavedAccount.hasNameLookupOpportunity(): Boolean = canFillName &&
+        (nameLookupVersionCode < currentVersionCode ||
+            (nameLookupVersionCode == currentVersionCode && nameLookupPending))
+
     private fun VaultData.summary() = AccountState(
-        accounts.map { AccountSummary(it.id, it.label, it.username, it.canFillName, it.nameLookupPending) }, defaultAccountId, settings,
+        accounts.map { AccountSummary(it.id, it.label, it.username, it.canFillName, it.hasNameLookupOpportunity()) }, defaultAccountId, settings,
     )
 
     private fun publish(value: VaultData): AccountState = value.summary().also { mutable.value = it }

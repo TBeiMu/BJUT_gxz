@@ -30,8 +30,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -72,7 +70,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -90,7 +87,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tbeimu.gongxiaozhu.data.AccountDraft
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
-import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import io.github.tbeimu.gongxiaozhu.update.UpdatePhase
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -124,9 +120,25 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     val wallpaper = rememberWallpaper()
     var destination by rememberSaveable { mutableStateOf<MyDestination?>(null) }
     var returnTab by rememberSaveable { mutableStateOf(Tab.MY) }
+    var networkSection by rememberSaveable { mutableStateOf(CampusNetworkSection.CONNECTION) }
+    var networkEntryRequest by rememberSaveable { mutableStateOf(0L) }
     val pages = rememberSaveableStateHolder()
-    fun open(page: MyDestination, from: Tab = tab) { returnTab = from; tab = Tab.MY; destination = page }
+    fun open(page: MyDestination, from: Tab = tab, section: CampusNetworkSection = CampusNetworkSection.CONNECTION) {
+        if (page.canonical == MyDestination.NETWORK) {
+            networkSection = if (page == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else section
+            networkEntryRequest++
+        }
+        returnTab = from; tab = Tab.MY; destination = page.canonical
+    }
     fun back() { destination = null; tab = returnTab }
+    // An old saved account destination is an entry request, never a second detail page.
+    LaunchedEffect(destination) {
+        if (destination == MyDestination.ACCOUNTS) {
+            networkSection = CampusNetworkSection.ACCOUNTS
+            networkEntryRequest++
+            destination = MyDestination.NETWORK
+        }
+    }
     var resetSchedule by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AccountSummary?>(null) }
     var resetting by remember { mutableStateOf(false) }
@@ -165,14 +177,16 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     }
 
     AppShell(tab, { tab = it; destination = null }, wallpaper, snackbar) { padding ->
-      ScreenHost(Screen(tab, destination)) { screen ->
+      ScreenHost(Screen(tab, destination?.canonical)) { screen ->
         pages.SaveableStateProvider(screen.key) {
             val selected = screen.destination
             if (selected != null) {
                 MyDetailScreen(selected, state, Modifier.padding(padding), model, wallpaper,
                     onBack = ::back, onResetAccounts = { resetting = true },
                     onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it }, updateActions = updateActions,
-                    onDialogVisibilityChanged = { localDialogVisible = it })
+                    onDialogVisibilityChanged = { localDialogVisible = it },
+                    networkSection = if (destination == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else networkSection,
+                    networkEntryRequest = networkEntryRequest)
             } else when (screen.tab) {
                 Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
                     ScheduleHome(state.schedule, Modifier, model.scheduleController::start,
@@ -191,10 +205,10 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                     PageHeader("校园网资费", null)
                     GlassCard {
                         Text("校园网账号存储暂不可用", style = MaterialTheme.typography.titleMedium)
-                        CtaButton("处理账号存储", { open(MyDestination.ACCOUNTS, Tab.BILLING) })
+                        CtaButton("处理账号存储", { open(MyDestination.NETWORK, Tab.BILLING, CampusNetworkSection.ACCOUNTS) })
                     }
                 } else BillingScreen(state, Modifier.padding(padding),
-                    onAccounts = { open(MyDestination.ACCOUNTS, Tab.BILLING) },
+                    onAccounts = { open(MyDestination.NETWORK, Tab.BILLING, CampusNetworkSection.ACCOUNTS) },
                     onQuery = model::queryBilling, onOffline = model::requestOffline,
                     onDialogVisibilityChanged = { localDialogVisible = it })
                 Tab.MY -> MyHomeScreen(state, Modifier.padding(padding), updates.phase == UpdatePhase.CHECKING,
@@ -332,73 +346,6 @@ internal fun Heading(title: String, subtitle: String) {
 @Composable
 internal fun Panel(content: @Composable () -> Unit) {
     GlassCard { content() }
-}
-
-@Composable
-internal fun NetworkPanel(state: AppUiState, model: AppViewModel) {
-    val palette = gxz
-    GlassCard {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            GlyphChip(AppGlyph.WIFI, tint = if (state.login.wifiConnected) palette.positive else palette.inkFaint)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(if (state.login.wifiConnected) "WiFi 已连接" else "等待连接 WiFi", style = MaterialTheme.typography.titleMedium)
-                Text(state.login.message, modifier = Modifier.testTag("login_status"),
-                    style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
-            }
-            // Logging in: the Wi-Fi signal straightens into 工 and back while the campus network answers.
-            if (state.login.running) BrandLoader(Modifier.size(34.dp), MarkMotion.SIGNAL)
-        }
-        if (state.login.running) {
-            Text("可切换到后台或锁屏；划掉 App 会停止本次认证。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
-            OutlinedButton(onClick = model::cancelLogin, modifier = Modifier.testTag("cancel_login")) { Text("取消认证") }
-        }
-        LoginDiagnostics(state.login)
-        LoginNotificationPermission()
-        if (state.login.needsChoice) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { model.updateSettings(state.data.settings.copy(networkMode = NetworkMode.PUBLIC_WIFI)) }, enabled = !state.busy) { Text("公共 WiFi") }
-            OutlinedButton(onClick = { model.updateSettings(state.data.settings.copy(networkMode = NetworkMode.DORM_WIFI)) }, enabled = !state.busy) { Text("宿舍 WiFi") }
-        }
-        CtaButton(when { state.login.running -> "正在认证…"; state.login.completed -> "检查联网状态"; else -> "登录 / 重试" },
-            model::login, Modifier.testTag("login_button"), enabled = !state.busy && !state.login.running)
-    }
-}
-
-@Composable
-internal fun Accounts(state: AppUiState, modifier: Modifier, onAdd: () -> Unit, onEdit: (String) -> Unit,
-    onDefault: (String) -> Unit, onDelete: (AccountSummary) -> Unit) {
-    val palette = gxz
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { CtaButton("添加账号", onAdd, enabled = !state.busy) }
-        item { Text("已保存 ${state.data.accounts.size} 个账号", Modifier.padding(start = 8.dp, top = 6.dp),
-            style = MaterialTheme.typography.labelMedium, color = palette.inkFaint) }
-        if (state.data.accounts.isEmpty()) item {
-            GlassCard {
-                Text("还没有账号", style = MaterialTheme.typography.titleLarge)
-                Text("添加校园网账号和密码，后续自动登录将使用默认账号。", style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
-            }
-        }
-        items(state.data.accounts, key = { it.id }) { account ->
-            // Added, removed and re-ordered accounts glide instead of jumping.
-            GlassCard(Modifier.animateItem(fadeInSpec = tween(Motion.MEDIUM), placementSpec = Motion.snappy(),
-                fadeOutSpec = tween(Motion.SHORT)), padding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp), spacing = 6.dp) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(account.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    if (account.id == state.data.defaultAccountId) Pill("默认")
-                }
-                Text(maskUsername(account.username), color = palette.inkSoft, style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace)
-                Text("密码已加密保存", style = MaterialTheme.typography.bodySmall, color = palette.inkFaint)
-                Row(Modifier.offset(x = (-12).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TextButton(onClick = { onEdit(account.id) }, enabled = !state.busy) { Text("编辑") }
-                    TextButton(onClick = { onDefault(account.id) }, enabled = !state.busy && account.id != state.data.defaultAccountId) { Text("设为默认") }
-                    TextButton(onClick = { onDelete(account) }, enabled = !state.busy) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                }
-            }
-        }
-        item { Text("切换默认账号不会退出当前网络会话。", Modifier.padding(horizontal = 8.dp),
-            style = MaterialTheme.typography.bodySmall, color = palette.inkFaint) }
-    }
 }
 
 @Composable

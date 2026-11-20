@@ -10,8 +10,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -36,17 +34,23 @@ import androidx.compose.ui.unit.dp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
 import io.github.tbeimu.gongxiaozhu.R
 import io.github.tbeimu.gongxiaozhu.data.AccountSummary
-import io.github.tbeimu.gongxiaozhu.data.NetworkMode
 import io.github.tbeimu.gongxiaozhu.schedule.*
 import java.text.DateFormat
 import java.util.Date
 
 internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
     SHUTTLE("校车时刻表", AppGlyph.BUS),
-    SCHEDULE("课表管理", AppGlyph.CALENDAR), ACCOUNTS("校园网账号", AppGlyph.PERSON),
-    NETWORK("校园网连接", AppGlyph.WIFI), APPEARANCE("个性化", AppGlyph.IMAGE),
+    SCHEDULE("课表管理", AppGlyph.CALENDAR),
+    // Retained only so an older saved destination can restore into the merged page.
+    ACCOUNTS("校园网", AppGlyph.WIFI),
+    NETWORK("校园网", AppGlyph.WIFI), APPEARANCE("个性化", AppGlyph.IMAGE),
     UPDATES("检查更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
 }
+
+internal val MyHomeDestinations = listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.NETWORK,
+    MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT)
+
+internal val MyDestination.canonical: MyDestination get() = if (this == MyDestination.ACCOUNTS) MyDestination.NETWORK else this
 
 @Composable
 internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates: Boolean = false,
@@ -66,10 +70,10 @@ internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates
                 Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
                     style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
             }
-            MyGroup(listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.ACCOUNTS, MyDestination.NETWORK),
+            MyGroup(MyHomeDestinations.take(3),
                 checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
-            MyGroup(listOf(MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT),
-                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 6)
+            MyGroup(MyHomeDestinations.drop(3),
+                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 5)
         }
         Row(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onOpenProject)
@@ -120,7 +124,9 @@ private fun MyGroup(entries: List<MyDestination>, checkingUpdates: Boolean, onOp
 internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Modifier, model: AppViewModel,
     wallpaper: WallpaperState, onBack: () -> Unit, onResetAccounts: () -> Unit,
     onResetSchedule: () -> Unit, onDelete: (AccountSummary) -> Unit, updateActions: UpdateActions,
-    onDialogVisibilityChanged: (Boolean) -> Unit = {}) {
+    onDialogVisibilityChanged: (Boolean) -> Unit = {},
+    networkSection: CampusNetworkSection = if (page == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else CampusNetworkSection.CONNECTION,
+    networkEntryRequest: Long = 0L) {
     val palette = gxz
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 8.dp, end = 16.dp),
@@ -131,8 +137,10 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
             Text(page.title, style = MaterialTheme.typography.titleLarge, color = palette.ink,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (page == MyDestination.ACCOUNTS && !state.storageBlocked && !state.loading) {
-            Accounts(state, Modifier.weight(1f), model::addAccount, model::editAccount, model::setDefault, onDelete)
+        if (page.canonical == MyDestination.NETWORK) {
+            CampusNetworkContent(state, Modifier.weight(1f), networkSection, networkEntryRequest,
+                model::addAccount, model::editAccount, model::setDefault, onDelete,
+                model::login, model::cancelLogin, model::updateSettings, model::reload, onResetAccounts)
         } else Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -177,39 +185,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                     LocalCourseManagement(schedule, model)
                     if (schedule.data.identity != null || schedule.blocked) TextButton(onClick = onResetSchedule, enabled = !schedule.busy) { Text("更换 / 解绑课表账号") }
                 }
-                MyDestination.ACCOUNTS -> StorageRecovery(state, model, onResetAccounts)
-                MyDestination.NETWORK -> if (state.storageBlocked || state.loading) StorageRecovery(state, model, onResetAccounts) else {
-                    state.data.defaultAccount?.let { Text("当前账号：${it.label} · ${maskUsername(it.username)}", Modifier.padding(horizontal = 8.dp),
-                        style = MaterialTheme.typography.bodySmall, color = palette.inkSoft) }
-                    NetworkPanel(state, model)
-                    GlassCard(padding = PaddingValues(start = 20.dp, end = 14.dp, top = 16.dp, bottom = 10.dp), spacing = 8.dp) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("打开 App 自动登录", style = MaterialTheme.typography.titleSmall)
-                                Text("失败后可手动重试", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
-                            }
-                            Switch(checked = state.data.settings.autoLogin, enabled = !state.busy,
-                                onCheckedChange = { model.updateSettings(state.data.settings.copy(autoLogin = it)) },
-                                modifier = Modifier.semantics { contentDescription = "打开 App 自动登录" })
-                        }
-                        HorizontalDivider(Modifier.padding(end = 6.dp, top = 4.dp, bottom = 4.dp), thickness = .7.dp, color = palette.hairline)
-                        Text("网络模式", style = MaterialTheme.typography.titleSmall)
-                        Column(Modifier.selectableGroup()) {
-                            NetworkMode.entries.forEach { mode ->
-                                val chosen = state.data.settings.networkMode == mode
-                                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small)
-                                    .selectable(selected = chosen, enabled = !state.busy, role = Role.RadioButton,
-                                        onClick = { model.updateSettings(state.data.settings.copy(networkMode = mode)) })
-                                    .semantics { contentDescription = "网络模式：${mode.title}" },
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    Text(mode.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                    RadioButton(selected = chosen, onClick = null, enabled = !state.busy,
-                                        modifier = Modifier.padding(end = 12.dp))
-                                }
-                            }
-                        }
-                    }
-                }
+                MyDestination.ACCOUNTS, MyDestination.NETWORK -> Unit // Rendered above with one shared list.
                 MyDestination.APPEARANCE -> WallpaperSettingsPanel(wallpaper)
                 MyDestination.UPDATES -> UpdatePanel(updateActions)
                 MyDestination.ABOUT -> GlassCard(padding = PaddingValues(24.dp), spacing = 10.dp) {
@@ -266,18 +242,6 @@ private fun LocalCourseManagement(state: ScheduleUiState, model: AppViewModel) {
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun StorageRecovery(state: AppUiState, model: AppViewModel, onReset: () -> Unit) {
-    GlassCard {
-        Text(if (state.loading) "正在读取账号…" else "账号存储暂不可用", style = MaterialTheme.typography.titleMedium)
-        if (!state.loading) {
-            Text("可以重试读取，或确认清除后重新录入。课表和应用更新可独立使用。", style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
-            CtaButton("重试读取", model::reload, enabled = !state.busy)
-            TextButton(onClick = onReset, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("清除本机账号并重新录入") }
         }
     }
 }

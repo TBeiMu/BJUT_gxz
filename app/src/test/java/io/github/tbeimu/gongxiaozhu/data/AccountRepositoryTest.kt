@@ -255,11 +255,11 @@ class AccountRepositoryTest {
         assertEquals(first.id, repository.state.value!!.defaultAccountId)
     }
 
-    @Test fun olderVaultDoesNotStartOnlineLookupsButCanUseImportedName() {
+    @Test fun olderVaultRenewsLookupOpportunityAndCanStillUseImportedName() {
         val old = """{"version":1,"accounts":[{"id":"legacy","label":"student-demo-01","username":"student-demo-01","password":"fictional-password"}],"defaultAccountId":"legacy"}"""
         store.bytes = cipher.encrypt(old.encodeToByteArray())
         val state = repository.load()
-        assertFalse(state.accounts.single().nameLookupPending)
+        assertTrue(state.accounts.single().nameLookupPending)
         assertTrue(state.accounts.single().canFillName)
         assertTrue(repository.fillNameFromSchedule("student-demo-01", "测试同学"))
     }

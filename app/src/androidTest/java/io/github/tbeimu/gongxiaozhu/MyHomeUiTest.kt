@@ -38,7 +38,7 @@ class MyHomeUiTest {
         schedule = ScheduleUiState(loading = false,
             data = ScheduleData(identity = ScheduleIdentity("fictional-student-2026", name))))
 
-    @Test fun profileShowsNameAndPlainGreetingWithSevenCleanEntries() {
+    @Test fun profileShowsNameAndPlainGreetingWithSixCleanEntries() {
         val opened = mutableListOf<MyDestination>()
         compose.setContent { MyPreviewTheme { AppBackdrop(WallpaperState()) {
             MyHomeScreen(bound(), Modifier.fillMaxSize(), nowProvider = { LocalDateTime.of(1970, 1, 1, 13, 0) }, onOpen = opened::add)
@@ -62,10 +62,12 @@ class MyHomeUiTest {
                 compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
             }
         }
-        MyDestination.entries.forEach { destination ->
+        assertEquals(6, MyHomeDestinations.size)
+        compose.onNodeWithTag("my_ACCOUNTS").assertDoesNotExist()
+        MyHomeDestinations.forEach { destination ->
             compose.onNodeWithTag("my_${destination.name}").performScrollTo().performClick()
         }
-        assertEquals(MyDestination.entries, opened)
+        assertEquals(MyHomeDestinations, opened)
     }
 
     @Test fun longNameAndLargeFontKeepEveryEntryReadableAndClickableOnSmallScreen() {
@@ -83,7 +85,7 @@ class MyHomeUiTest {
                 val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
                 assertTrue(get(results)); assertFalse(results.single().hasVisualOverflow)
             }
-        MyDestination.entries.forEach { destination ->
+        MyHomeDestinations.forEach { destination ->
             val row = compose.onNodeWithTag("my_${destination.name}")
             row.performScrollTo().assertIsDisplayed()
             compose.onNodeWithText(destination.title).performSemanticsAction(
@@ -93,7 +95,7 @@ class MyHomeUiTest {
             }
             row.performClick()
         }
-        assertEquals(MyDestination.entries, opened)
+        assertEquals(MyHomeDestinations, opened)
     }
 
     private fun verifyGithubFooter(fontScale: Float, dark: Boolean, height: Int) {
@@ -128,7 +130,7 @@ class MyHomeUiTest {
                 assertTrue(layout.getLineLeft(0) >= 0f)
                 assertTrue(layout.getLineRight(0) <= layout.size.width)
             }
-        MyDestination.entries.forEach { destination ->
+        MyHomeDestinations.forEach { destination ->
             val row = compose.onNodeWithTag("my_${destination.name}").performScrollTo().assertIsDisplayed()
             assertTrue(row.fetchSemanticsNode().boundsInRoot.bottom <= original.top)
             assertEquals(original, footer.fetchSemanticsNode().boundsInRoot)

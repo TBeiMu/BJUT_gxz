@@ -237,7 +237,11 @@ internal fun RollingNumber(text: String, style: TextStyle, color: Color, modifie
 
 /** Where the user is: a root tab, or a page opened from it. */
 internal data class Screen(val tab: Tab, val destination: MyDestination?) {
-    val key: String get() = destination?.let { "detail/${it.name}" } ?: "tab/${tab.name}"
+    val key: String get() = when (val page = destination?.canonical) {
+        MyDestination.NETWORK -> "detail/NETWORK/merged"
+        null -> "tab/${tab.name}"
+        else -> "detail/${page.name}"
+    }
 }
 
 /**

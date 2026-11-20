@@ -88,7 +88,7 @@ class ScheduleUiTest {
         compose.onNodeWithTag("schedule_status").assertDoesNotExist()
         compose.onNodeWithText("我的", substring = false).performClick()
         compose.onNodeWithTag("my_profile_title").assertTextEquals("测试校园网")
-        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
+        compose.onNodeWithTag("my_NETWORK").assertExists()
         screenshot("my-preview.png")
         compose.onNodeWithTag("my_SCHEDULE").performClick()
         compose.onNodeWithText("示例同学").assertIsDisplayed()

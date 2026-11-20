@@ -45,7 +45,7 @@ class StorageBlockedUpdateTest {
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
         compose.onNodeWithText("网络模式", substring = false).assertDoesNotExist()
         compose.onNodeWithText("我的").performClick()
-        compose.onNodeWithTag("my_ACCOUNTS").assertExists()
+        compose.onNodeWithTag("my_NETWORK").assertExists()
         assertArrayEquals(corrupt, AndroidVaultStore(compose.activity).read())
     }
 }

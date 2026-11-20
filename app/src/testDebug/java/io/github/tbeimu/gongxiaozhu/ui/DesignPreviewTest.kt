@@ -6,6 +6,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -79,7 +82,11 @@ class DesignPreviewTest {
     @Test fun my() = open(tab = "MY") { shot("08-my") }
     @Test @Config(qualifiers = "+night") fun myNight() = open(tab = "MY") { shot("09-my-night") }
     @Test fun network() = open(page = "NETWORK") { shot("10-network") }
-    @Test fun accounts() = open(page = "ACCOUNTS") { shot("11-accounts") }
+    @Test fun campusSettings() = open(page = "NETWORK") {
+        compose.onNodeWithTag("campus_network_list").performScrollToNode(hasTestTag("campus_settings_toggle"))
+        compose.onNodeWithTag("campus_settings_toggle").performScrollTo().performClick()
+        shot("11-campus-settings")
+    }
     @Test fun appearance() = open(page = "APPEARANCE") { shot("12-appearance") }
     @Test fun scheduleManagement() = open(page = "SCHEDULE") { shot("13-schedule-management") }
     @Test fun about() = open(page = "ABOUT") { shot("14-about") }

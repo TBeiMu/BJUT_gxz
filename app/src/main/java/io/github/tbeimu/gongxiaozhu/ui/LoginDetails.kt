@@ -24,7 +24,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.tbeimu.gongxiaozhu.network.LoginUiState
 
 @Composable
-internal fun LoginNotificationPermission() {
+internal fun LoginNotificationPermission(onInteraction: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var enabled by remember { mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled()) }
@@ -43,10 +43,14 @@ internal fun LoginNotificationPermission() {
         onDispose { lifecycle.removeObserver(observer) }
     }
     if (!enabled) {
-        if (Build.VERSION.SDK_INT >= 33) TextButton(onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+        if (Build.VERSION.SDK_INT >= 33) TextButton(onClick = {
+            onInteraction()
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }) {
             Text("允许通知以查看后台认证进度（可选）")
         }
         TextButton(onClick = {
+            onInteraction()
             try {
                 context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
             } catch (_: ActivityNotFoundException) {
@@ -60,10 +64,10 @@ internal fun LoginNotificationPermission() {
 }
 
 @Composable
-internal fun LoginDiagnostics(state: LoginUiState) {
+internal fun LoginDiagnostics(state: LoginUiState, onInteraction: () -> Unit = {}) {
     var expanded by remember { mutableStateOf(false) }
     if (state.diagnostics.isNotEmpty()) {
-        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起认证耗时" else "查看认证耗时") }
+        TextButton(onClick = { onInteraction(); expanded = !expanded }) { Text(if (expanded) "收起认证耗时" else "查看认证耗时") }
         if (expanded) state.diagnostics.forEach {
             Text("${it.step.title} · ${it.elapsedMs} 毫秒 · ${it.result.title}")
         }

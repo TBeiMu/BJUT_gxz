@@ -31,7 +31,8 @@ data class AccountState(
 @Serializable
 internal data class SavedAccount(val id: String, val label: String, val username: String, val password: String,
     // Older vaults used the account itself as the generated label.
-    val customLabel: Boolean? = null, val nameLookupPending: Boolean = false) {
+    val customLabel: Boolean? = null, val nameLookupPending: Boolean = false,
+    val nameLookupVersionCode: Int = 0) {
     val canFillName: Boolean get() = customLabel != true && (label.isBlank() || label == username)
     override fun toString(): String = "SavedAccount(id=$id, credentials=<redacted>)"
 }
