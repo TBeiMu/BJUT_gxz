@@ -82,7 +82,10 @@ class BillingRetainedControllerTest {
     private inner class Harness(scope: CoroutineScope, val cache: Cache, io: CoroutineDispatcher) {
         var state = BillingUiState()
         var storageFailures = 0
-        val controller = BillingController(scope, { id -> AccountDraft(id, "测试", "fictional-$id", "fictional-password") },
+        var credentialReads = 0
+        val controller = BillingController(scope, { id ->
+            credentialReads++; AccountDraft(id, "测试", "fictional-$id", "fictional-password")
+        },
             { state = it }, { storageFailures++ }, {}, cache = cache, cacheIo = io)
         fun configure(session: Session, id: String = "account-a", visible: Boolean = false) {
             controller.accountChanged(id)
@@ -100,6 +103,58 @@ class BillingRetainedControllerTest {
     private fun TestScope.settle(io: QueuedIo) {
         runCurrent()
         do { io.drain(); runCurrent() } while (io.pending)
+    }
+
+    @Test fun wifiReadinessTracksFreshForegroundObservationsAcrossSuccessAndAccountResets() = runTest {
+        for (foregroundFirst in listOf(false, true)) {
+            val h = harness(); val session = Session()
+            assertFalse(h.state.wifiReady)
+            h.controller.accountChanged("account-a"); runCurrent()
+            assertFalse(h.state.wifiReady)
+            if (foregroundFirst) {
+                h.controller.enterForeground(); assertFalse(h.state.wifiReady)
+                h.controller.wifiChanged(wifi(session))
+            } else {
+                h.controller.wifiChanged(wifi(session)); assertFalse(h.state.wifiReady)
+                h.controller.enterForeground()
+            }
+            assertTrue("Foreground first: $foregroundFirst", h.state.wifiReady)
+            h.controller.query(); runCurrent()
+            assertEquals(demoSnapshot, h.state.snapshot); assertTrue(h.state.wifiReady)
+            h.controller.accountChanged("account-b"); runCurrent()
+            assertNull(h.state.snapshot); assertTrue(h.state.wifiReady)
+            h.controller.wifiObservationPaused(); assertFalse(h.state.wifiReady)
+            h.controller.wifiChanged(wifi(session)); assertTrue(h.state.wifiReady)
+            h.controller.leaveForeground(); assertFalse(h.state.wifiReady)
+            h.controller.enterForeground(); assertFalse(h.state.wifiReady)
+            h.controller.wifiChanged(null); assertFalse(h.state.wifiReady)
+            h.controller.wifiChanged(wifi(session, "replacement-wifi")); assertTrue(h.state.wifiReady)
+            h.controller.leaveForeground(); assertFalse(h.state.wifiReady)
+            h.controller.wifiChanged(wifi(session, "background-wifi")); assertFalse(h.state.wifiReady)
+            h.controller.enterForeground(); assertTrue(h.state.wifiReady)
+            assertEquals(1, session.refreshes)
+        }
+    }
+
+    @Test fun unavailableWifiQueriesNeverReadCredentialsOrConsumeTheNextAutomaticAttempt() = runTest {
+        for (observation in listOf("unknown", "disconnected", "paused")) {
+            val cache = Cache().apply { value = cached() }; val h = harness(cache); val session = Session()
+            h.controller.accountChanged("account-a"); h.controller.enterForeground()
+            when (observation) {
+                "disconnected" -> h.controller.wifiChanged(null)
+                "paused" -> { h.controller.wifiChanged(wifi(session)); h.controller.wifiObservationPaused() }
+            }
+            h.controller.setVisible(true); runCurrent()
+            h.controller.query(); h.controller.query("1234"); runCurrent()
+            assertFalse(observation, h.state.wifiReady); assertFalse(h.state.running)
+            assertEquals(observation, 0, h.credentialReads); assertEquals(0, session.refreshes)
+            assertEquals(demoSnapshot, h.state.snapshot); assertEquals(1234L, h.state.loadedAt)
+            assertEquals(cached(), cache.value)
+            h.controller.wifiChanged(wifi(session)); assertTrue(h.state.wifiReady); runCurrent()
+            assertEquals(observation, 1, h.credentialReads); assertEquals(1, session.refreshes)
+            assertEquals(demoSnapshot, h.state.snapshot); assertFalse(h.state.snapshotFromCache)
+            assertTrue(h.state.wifiReady); assertFalse(h.state.running)
+        }
     }
 
     @Test fun successfulQueryFailureAndRetryKeepOnlyTheMostRecentSuccessfulResult() = runTest {

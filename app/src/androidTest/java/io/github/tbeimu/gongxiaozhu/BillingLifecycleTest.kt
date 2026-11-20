@@ -117,8 +117,9 @@ class BillingLifecycleTest {
         instrumentation.waitForIdleSync()
         assertTrue(sessionClosed)
         assertSavedDisplay()
+        assertFalse(model.state.value.billing.wifiReady)
         scenario.moveToState(Lifecycle.State.RESUMED)
-        waitFor { currentWifi() != null }
+        waitFor { currentWifi() != null && model.state.value.billing.wifiReady }
         assertEquals(wifiKey, currentWifi()!!.key)
         assertSavedDisplay()
     }
@@ -174,6 +175,7 @@ class BillingLifecycleTest {
         scenario.moveToState(Lifecycle.State.RESUMED)
         waitFor { runtime.connections.value == WifiObservation.Current(null) && !model.state.value.billing.devicesActionable }
         instrumentation.waitForIdleSync()
+        assertFalse(model.state.value.billing.wifiReady)
         assertSavedDisplay()
         assertSavedCache()
         assertDeviceActionsUnavailable()
@@ -187,12 +189,13 @@ class BillingLifecycleTest {
         waitForNoPhysicalWifi()
         waitFor { runtime.connections.value == WifiObservation.Current(null) && !model.state.value.billing.devicesActionable }
         instrumentation.waitForIdleSync()
+        assertFalse(model.state.value.billing.wifiReady)
         assertTrue(sessionClosed)
         assertSavedDisplay()
         assertSavedCache()
         assertDeviceActionsUnavailable()
         shell("svc wifi enable")
-        waitFor { currentWifi() != null }
+        waitFor { currentWifi() != null && model.state.value.billing.wifiReady }
         instrumentation.waitForIdleSync()
         assertSavedDisplay()
         assertSavedCache()

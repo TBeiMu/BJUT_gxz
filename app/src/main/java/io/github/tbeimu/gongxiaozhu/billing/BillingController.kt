@@ -30,6 +30,7 @@ data class BillingUiState(
     val queryFailed: Boolean = false,
     val snapshotFromCache: Boolean = false,
     val devicesActionable: Boolean = true,
+    val wifiReady: Boolean = false,
 ) {
     override fun toString() = "BillingUiState(running=$running, data=<redacted>)"
 }
@@ -95,6 +96,7 @@ class BillingController(
         // The saved figures belong to the account; only its live session belongs to this WiFi.
         if (changed && !firstSnapshot) reset(if (connection == null) "未连接 WiFi" else "网络已变，请重查",
             clearData = false, queryFailed = false)
+        else emit(state)
         maybeQuery()
     }
 
@@ -108,6 +110,7 @@ class BillingController(
         if (foreground) return
         foreground = true
         attempted = false
+        emit(state)
         maybeQuery()
     }
 
@@ -131,9 +134,9 @@ class BillingController(
     fun query(code: String? = null) {
         if (!foreground || !accountsReady || !wifiObserved || job?.isCompleted == false) return
         if (state.webPage != null) return
+        val selectedWifi = wifi ?: return
         attempted = true
         val id = accountId ?: run { emit(state.copy(message = "请先添加账号")); return }
-        val selectedWifi = wifi ?: run { emit(state.copy(message = "未连接 WiFi")); return }
         val current = session ?: selectedWifi.billingSession?.invoke()?.also { session = it }
             ?: run { emit(state.copy(message = "当前 WiFi 无法查询")); return }
         val token = ++generation
@@ -421,5 +424,8 @@ class BillingController(
         }
     }
 
-    private fun emit(next: BillingUiState) { state = next; publish(next) }
+    private fun emit(next: BillingUiState) {
+        state = next.copy(wifiReady = foreground && wifiObserved && wifi != null)
+        publish(state)
+    }
 }

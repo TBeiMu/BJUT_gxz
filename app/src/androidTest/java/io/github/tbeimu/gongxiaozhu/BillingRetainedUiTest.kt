@@ -59,7 +59,7 @@ class BillingRetainedUiTest {
     @Test fun retainedValuesAndFailureStatusKeepTheDarkSmallScreenLayoutStill() = retainedLayout(dark = true)
 
     private fun retainedLayout(dark: Boolean) {
-        val billing = mutableStateOf(BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询成功"))
+        val billing = mutableStateOf(BillingUiState(wifiReady = true, snapshot = snapshot, loadedAt = loadedAt, message = "查询成功"))
         val fontScale = mutableStateOf(1f)
         var expectedGap = 0f
         compose.setContent {
@@ -92,7 +92,7 @@ class BillingRetainedUiTest {
         for (scale in listOf(1f, 1.8f)) {
             compose.runOnIdle {
                 fontScale.value = scale
-                billing.value = BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询成功")
+                billing.value = BillingUiState(wifiReady = true, snapshot = snapshot, loadedAt = loadedAt, message = "查询成功")
             }
             val original = fixed.associateWith(::bounds)
             compose.runOnIdle { billing.value = billing.value.copy(running = true, message = "正在查询", devicesActionable = false) }
@@ -158,7 +158,7 @@ class BillingRetainedUiTest {
     }
 
     @Test fun restoredHistoryKeepsItsValuesDevicesAndTimestampButRequiresRefreshBeforeLogout() {
-        val billing = mutableStateOf(BillingUiState(snapshot = snapshot, loadedAt = loadedAt,
+        val billing = mutableStateOf(BillingUiState(wifiReady = true, snapshot = snapshot, loadedAt = loadedAt,
             snapshotFromCache = true, devicesActionable = false))
         val requests = mutableListOf<String?>(); val selected = mutableListOf<String>()
         compose.setContent { GongXiaoZhuTheme {
@@ -185,7 +185,7 @@ class BillingRetainedUiTest {
 
     @Test fun losingTheLiveSessionClosesAnOpenDeviceChooserAndDisablesEveryLogoutEntry() {
         val other = device.copy(sessionId = "fictional-other-session", ip = "192.0.2.11")
-        val billing = mutableStateOf(BillingUiState(snapshot = snapshot.copy(devices = listOf(device, other)), loadedAt = loadedAt))
+        val billing = mutableStateOf(BillingUiState(wifiReady = true, snapshot = snapshot.copy(devices = listOf(device, other)), loadedAt = loadedAt))
         val selected = mutableListOf<String>(); val visible = mutableListOf<Boolean>()
         compose.setContent { GongXiaoZhuTheme {
             BillingScreen(app(billing.value), Modifier, {}, {}, selected::add, visible::add)
@@ -203,8 +203,43 @@ class BillingRetainedUiTest {
         assertTrue(selected.isEmpty())
     }
 
+    @Test fun queryRequiresConfirmedWifiWhileHistoryAndAccountManagementRemainAvailable() {
+        val billing = mutableStateOf(BillingUiState(wifiReady = false, snapshot = snapshot, loadedAt = loadedAt,
+            snapshotFromCache = true, devicesActionable = false))
+        val requests = mutableListOf<String?>()
+        var accountsOpened = 0
+        compose.setContent { GongXiaoZhuTheme {
+            BillingScreen(app(billing.value), Modifier, { accountsOpened++ }, requests::add, {})
+        } }
+        compose.onNodeWithText("1234", substring = false).assertExists()
+        compose.onNodeWithText("12.3456", substring = false).assertExists()
+        compose.onNodeWithText(timestamp(), substring = false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("device_traffic_0").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("1.500 MB", substring = false).assertExists()
+        compose.onNodeWithTag("billing_login").performScrollTo().assertIsNotEnabled().performClick()
+        assertTrue(requests.isEmpty())
+        compose.onNodeWithTag("billing_accounts").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(1, accountsOpened)
+        compose.runOnIdle { billing.value = billing.value.copy(wifiReady = true) }
+        compose.onNodeWithTag("billing_login").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(listOf<String?>(null), requests)
+        // A confirmed disconnection disables the same action without discarding retained values.
+        compose.runOnIdle { billing.value = billing.value.copy(wifiReady = false) }
+        compose.onNodeWithTag("billing_login").assertIsNotEnabled().performClick()
+        assertEquals(listOf<String?>(null), requests)
+        compose.runOnIdle { billing.value = billing.value.copy(wifiReady = true) }
+        compose.onNodeWithTag("billing_login").assertIsEnabled()
+        // Returning to an unknown/not-yet-fresh WiFi snapshot must disable it again.
+        compose.runOnIdle { billing.value = billing.value.copy(wifiReady = false) }
+        compose.onNodeWithTag("billing_login").assertIsNotEnabled().performClick()
+        assertEquals(listOf<String?>(null), requests)
+        compose.onNodeWithTag("billing_accounts").assertIsEnabled()
+        compose.onNodeWithText(timestamp(), substring = false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("device_traffic_0").performScrollTo().assertIsDisplayed()
+    }
+
     @Test fun requiredUserActionHintsRemainSpecificWhenHistoryIsRetained() {
-        val billing = mutableStateOf(BillingUiState(snapshot = snapshot, loadedAt = loadedAt, devicesActionable = false))
+        val billing = mutableStateOf(BillingUiState(wifiReady = true, snapshot = snapshot, loadedAt = loadedAt, devicesActionable = false))
         compose.setContent { GongXiaoZhuTheme { BillingScreen(app(billing.value), Modifier, {}, {}, {}) } }
         for (problem in listOf(BillingProblem.CAPTCHA, BillingProblem.CAPTCHA_REJECTED, BillingProblem.UNCONFIRMED, BillingProblem.EXPIRED, BillingProblem.ACCOUNT_MISMATCH)) {
             compose.runOnIdle { billing.value = billing.value.copy(message = problem.hint, queryFailed = false,

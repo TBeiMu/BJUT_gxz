@@ -222,7 +222,7 @@ private fun showcaseState(today: LocalDate): AppUiState {
     return AppUiState(
         data = AccountState(accounts, "demo-1"), loading = false,
         login = LoginUiState(message = "校园网已连接，可以正常上网", wifiConnected = true, completed = true),
-        billing = BillingUiState(snapshot = billing, loadedAt = updated),
+        billing = BillingUiState(snapshot = billing, loadedAt = updated, wifiReady = true),
         schedule = ScheduleUiState(ScheduleData(identity = identity, complete = schedule), loading = false,
             message = "整学期导入完成", notice = ScheduleNotice.SUCCESS),
     )

@@ -80,7 +80,7 @@ class BillingUiTest {
         var queried = false
         var chooserVisible = false
         compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(snapshot = BillingSnapshot(metrics, listOf(device)),
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, snapshot = BillingSnapshot(metrics, listOf(device)),
                 diagnostics = listOf(BillingDiagnostic("虚构诊断阶段", 200, "资费页", true)))),
                 Modifier, {}, { queried = true }, { selected = it }, { chooserVisible = it })
         } } }
@@ -119,7 +119,7 @@ class BillingUiTest {
 
     @Test fun missingMetricsAndOnlineErrorDoNotInventValuesOrDevices() {
         compose.setContent { BillingPreviewTheme {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(snapshot = BillingSnapshot(
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, snapshot = BillingSnapshot(
                 mapOf("可用流量" to BillingMetric("不限量", "")), emptyList(), "在线设备读取失败"))), Modifier, {}, {}, {})
         } }
         compose.onNodeWithText("不限量").assertExists()
@@ -133,7 +133,7 @@ class BillingUiTest {
         val selected = mutableListOf<String>()
         val other = device.copy(sessionId = "second-fake-session", ip = "192.0.2.11")
         compose.setContent { BillingPreviewTheme {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true,
                 snapshot = BillingSnapshot(metrics, listOf(device, other)))), Modifier, {}, {}, selected::add)
         } }
         compose.onNodeWithTag("billing_offline").performScrollTo().performClick()
@@ -149,7 +149,7 @@ class BillingUiTest {
 
     @Test fun captchaDoneSubmitsOnlyExplicitCompleteInputAndHidesKeyboard() {
         val requests = mutableListOf<String?>()
-        val billing = mutableStateOf(BillingUiState(captcha = byteArrayOf(1)))
+        val billing = mutableStateOf(BillingUiState(wifiReady = true, captcha = byteArrayOf(1)))
         var hidden = 0
         val keyboard = object : SoftwareKeyboardController {
             override fun show() = Unit
@@ -197,7 +197,7 @@ class BillingUiTest {
     @Test fun imeAndButtonFromSameFrameDispatchOnceAndSynchronousFailureCanRetry() {
         val requests = mutableListOf<String?>()
         compose.setContent { BillingPreviewTheme {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(captcha = byteArrayOf(1))),
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, captcha = byteArrayOf(1))),
                 Modifier, {}, requests::add, {})
         } }
         val captcha = compose.onNodeWithTag("billing_captcha")
@@ -217,13 +217,14 @@ class BillingUiTest {
 
     @Test fun captchaSubmissionRequiresUsableAccountAndResetsWhenAccountChanges() {
         val requests = mutableListOf<String?>()
-        val app = mutableStateOf(AppUiState(data = data, loading = false, billing = BillingUiState(captcha = byteArrayOf(1))))
+        val app = mutableStateOf(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, captcha = byteArrayOf(1))))
         compose.setContent { BillingPreviewTheme {
             BillingScreen(app.value, Modifier, {}, requests::add, {})
         } }
         val captcha = compose.onNodeWithTag("billing_captcha")
         captcha.performScrollTo().performTextInput("1234")
         for (unavailable in listOf(app.value.copy(loading = true), app.value.copy(storageBlocked = true),
+            app.value.copy(billing = app.value.billing.copy(wifiReady = false)),
             app.value.copy(busy = true), app.value.copy(billing = app.value.billing.copy(running = true)))) {
             compose.runOnIdle { app.value = unavailable }
             compose.onNodeWithTag("billing_login").assertIsNotEnabled()
@@ -247,7 +248,7 @@ class BillingUiTest {
 
     @Test fun queryStatusKeepsActionsStillAndDisablesDuplicateOperations() {
         val snapshot = BillingSnapshot(metrics, listOf(device))
-        val billing = mutableStateOf(BillingUiState())
+        val billing = mutableStateOf(BillingUiState(wifiReady = true))
         val fontScale = mutableStateOf(1f)
         var expectedGap = 0f
         compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
@@ -264,7 +265,7 @@ class BillingUiTest {
         val fixed = listOf("metric_已用流量", "metric_可用流量", "metric_消费保护", "metric_账户余额",
             "billing_login", "billing_accounts", "billing_offline")
         for (scale in listOf(1f, 1.8f)) {
-            compose.runOnIdle { fontScale.value = scale; billing.value = BillingUiState() }
+            compose.runOnIdle { fontScale.value = scale; billing.value = BillingUiState(wifiReady = true) }
             val original = fixed.associateWith(::bounds)
             val status = compose.onNodeWithTag("billing_status_area").fetchSemanticsNode().boundsInRoot
             val accountBounds = compose.onNodeWithTag("billing_account").fetchSemanticsNode().boundsInRoot
@@ -321,7 +322,7 @@ class BillingUiTest {
 
     @Test fun missingDeviceTrafficHasAnExplicitUnknownValue() {
         compose.setContent { BillingPreviewTheme {
-            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(snapshot = BillingSnapshot(
+            BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, snapshot = BillingSnapshot(
                 metrics, listOf(device.copy(traffic = null))))), Modifier, {}, {}, {})
         } }
         compose.onNodeWithTag("device_traffic_0").performScrollTo()
@@ -334,7 +335,7 @@ class BillingUiTest {
         compose.setContent { BillingPreviewTheme { AppBackdrop(WallpaperState()) {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
-                BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(snapshot = BillingSnapshot(
+                BillingScreen(AppUiState(data = data, loading = false, billing = BillingUiState(wifiReady = true, snapshot = BillingSnapshot(
                     metrics, listOf(device)))), Modifier.height(420.dp), {}, {}, { selected = it })
             }
         } } }

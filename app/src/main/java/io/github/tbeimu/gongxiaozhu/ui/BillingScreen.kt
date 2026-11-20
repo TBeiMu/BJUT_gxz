@@ -76,7 +76,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val canQuery = enabled && !state.loading && !state.storageBlocked && state.data.defaultAccount != null &&
+    val canQuery = enabled && billing.wifiReady && !state.loading && !state.storageBlocked && state.data.defaultAccount != null &&
         (billing.captcha == null || code.length == 4)
     val submitQuery: () -> Unit = {
         if (canQuery && !submittingQuery) {
