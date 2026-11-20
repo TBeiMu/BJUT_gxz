@@ -69,6 +69,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     onQuery: (String?) -> Unit, onOffline: (String) -> Unit, onDialogVisibilityChanged: (Boolean) -> Unit = {}) {
     val billing = state.billing
     val enabled = !state.busy && !billing.running
+    val devicesEnabled = enabled && billing.devicesActionable
     val metrics = billing.snapshot?.metrics.orEmpty()
     var code by remember(state.data.defaultAccount?.id, billing.captcha) { mutableStateOf("") }
     var submittingQuery by remember { mutableStateOf(false) }
@@ -92,7 +93,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
             }
         }
     }
-    var choosingDevice by remember(billing.snapshot?.devices) { mutableStateOf(false) }
+    var choosingDevice by remember(billing.snapshot?.devices, billing.devicesActionable) { mutableStateOf(false) }
     ReportDialogVisibility(choosingDevice, onDialogVisibilityChanged)
     val context = LocalContext.current
     val palette = gxz
@@ -102,7 +103,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
             properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 billing.snapshot?.devices.orEmpty().forEachIndexed { index, device ->
-                    OutlinedButton(onClick = { choosingDevice = false; onOffline(device.sessionId) }, enabled = enabled,
+                    OutlinedButton(onClick = { choosingDevice = false; onOffline(device.sessionId) }, enabled = devicesEnabled,
                         shape = RoundedCornerShape(16.dp), border = quietBorder,
                         modifier = Modifier.fillMaxWidth().testTag("choose_offline_$index")) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Text("设备 ${index + 1} · ${device.ip.ifBlank { "IPv6 设备" }}")
@@ -113,11 +114,11 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
     }
     val scroll = rememberScrollState()
     // While the school is being asked, empty figures shimmer instead of sitting still.
-    val waiting = billing.running
+    val waiting = billing.running && billing.snapshot == null
     Column(modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         BillingHeader(state.data.defaultAccount?.let { "${it.label} · ${maskUsername(it.username)}" } ?: "未添加校园网账号",
-            billing.message, billing.running, Modifier.parallaxHeader(scroll))
+            if (billing.queryFailed) "查询失败" else billing.message, billing.running, Modifier.parallaxHeader(scroll))
         // The four figures arrive as a Z: left to right, then the next row.
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("已用流量", metrics["已用流量"], AppGlyph.TRAFFIC, waiting, Modifier.weight(1f).fillMaxHeight().entrance(40, fromScale = .96f))
@@ -153,7 +154,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
                 val devices = billing.snapshot?.devices.orEmpty()
                 if (devices.size == 1) onOffline(devices.single().sessionId)
                 else if (devices.size > 1) choosingDevice = true
-            }, enabled = enabled && !billing.snapshot?.devices.isNullOrEmpty(),
+            }, enabled = devicesEnabled && !billing.snapshot?.devices.isNullOrEmpty(),
                 contentPadding = PaddingValues(horizontal = 8.dp), border = quietBorder,
                 modifier = Modifier.weight(1f).heightIn(min = 46.dp).testTag("billing_offline")) { Text("注销设备") }
         }
@@ -170,7 +171,7 @@ internal fun BillingScreen(state: AppUiState, modifier: Modifier, onAccounts: ()
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         GlyphChip(AppGlyph.DEVICE)
                         Text("设备 ${index + 1}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = { onOffline(device.sessionId) }, enabled = enabled,
+                        TextButton(onClick = { onOffline(device.sessionId) }, enabled = devicesEnabled,
                             modifier = Modifier.testTag("offline_device_$index")) { Text("注销") }
                     }
                     DeviceInfo("IPv4", device.ip.ifBlank { "未获取" })

@@ -23,6 +23,7 @@ sealed interface WifiObservation {
 class CampusLoginRuntime private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val accounts = createAccountRepository(context)
+    val billingCache = io.github.tbeimu.gongxiaozhu.billing.createBillingCacheRepository(context)
     val scheduleImport = io.github.tbeimu.gongxiaozhu.schedule.ScheduleImportRuntime.get(context)
     val connectionNotice = CampusConnectionNotice(scope)
     private val blocked = MutableStateFlow(false)

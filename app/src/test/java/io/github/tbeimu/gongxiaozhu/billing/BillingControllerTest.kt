@@ -246,7 +246,7 @@ class BillingControllerTest {
         }
     }
 
-    @Test fun expiredOfflineSessionKeepsItsExplicitFailureWithoutRetrying() = runTest {
+    @Test fun expiredOfflineSessionKeepsItsExplicitFailureAndInvalidatesOldDataWithoutRetrying() = runTest {
         val fake = FakeSession().apply { onOffline = { throw BillingException(BillingProblem.EXPIRED) } }
         var state = BillingUiState()
         val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
@@ -254,7 +254,7 @@ class BillingControllerTest {
         controller.requestOffline(demoDevice.sessionId); runCurrent(); controller.confirmOffline(); runCurrent()
         assertEquals(BillingProblem.EXPIRED.hint, state.message)
         assertEquals(1, fake.offlineCalls); assertEquals(1, fake.calls)
-        assertEquals(demoSnapshot, state.snapshot)
+        assertNull(state.snapshot); assertNull(state.loadedAt); assertFalse(state.devicesActionable)
     }
 
     @Test fun authenticationCleanupFailureDoesNotClaimAnOfflineRequestWasSent() = runTest {

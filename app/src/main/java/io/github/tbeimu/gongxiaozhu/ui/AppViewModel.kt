@@ -118,7 +118,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
             mutable.update { it.copy(storageBlocked = true, editor = null, editorDraft = null, discardAccountChanges = false, editorError = null) }
         },
         beforeOffline = loginController::deviceOfflineRequested,
-        awaitLoginStopped = loginController::awaitStopped)
+        awaitLoginStopped = loginController::awaitStopped, cache = runtime.billingCache)
 
     init {
         loginController.awaitAccountReadiness()
@@ -137,7 +137,8 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         viewModelScope.launch { runtime.connections.collect(::billingWifiObserved) }
         viewModelScope.launch {
             state.collect {
-                billingController.accountChanged(if (it.loading || it.storageBlocked) null else it.data.defaultAccountId)
+                if (it.loading) billingController.accountsLoading()
+                else billingController.accountChanged(if (it.storageBlocked) null else it.data.defaultAccountId)
                 if (!it.loading) loginController.configure(ready = !it.storageBlocked,
                     automatic = it.data.settings.autoLogin && it.data.defaultAccount != null,
                     mode = it.data.settings.networkMode, accountId = it.data.defaultAccountId)
