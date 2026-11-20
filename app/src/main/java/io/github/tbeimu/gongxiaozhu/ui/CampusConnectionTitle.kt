@@ -23,6 +23,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -56,9 +57,16 @@ internal fun CampusConnectionTitle(weekTitle: String, notice: CampusConnectionNo
         headline = headline, restingTitle = weekTitle)
 }
 
+private data class CampusTitleMetrics(val resting: AnnotatedString, val restingStyle: TextStyle,
+    val noticeStyle: TextStyle, val height: Dp)
+
+/** Measure the title without composing a second notice owner or changing its visibility. */
 @Composable
-private fun TitleText(text: String, notice: Boolean, modifier: Modifier = Modifier, headline: TextStyle? = null,
-    restingTitle: String) {
+internal fun campusTitleSlotHeight(restingTitle: String, headline: TextStyle? = null): Dp =
+    campusTitleMetrics(restingTitle, headline).height
+
+@Composable
+private fun campusTitleMetrics(restingTitle: String, headline: TextStyle?): CampusTitleMetrics {
     val palette = gxz
     // Editorial setting: the week number is the headline, “第” and “周” are its captions.
     // The text stays exactly “第 N 周”; only its spans are styled.
@@ -83,9 +91,16 @@ private fun TitleText(text: String, notice: Boolean, modifier: Modifier = Modifi
         measurer.measure("正在登录校园网", noticeStyle, maxLines = 1).size.height,
         measurer.measure("未连接WiFi", noticeStyle, maxLines = 1).size.height,
     )
-    Box(Modifier.fillMaxWidth().height(with(LocalDensity.current) { slotHeight.toDp() }), Alignment.CenterStart) {
-        Text(if (notice) AnnotatedString(text) else resting, modifier.fillMaxWidth(), textAlign = TextAlign.Start,
-            color = MaterialTheme.colorScheme.onBackground, style = if (notice) noticeStyle else restingStyle,
+    return CampusTitleMetrics(resting, restingStyle, noticeStyle, with(LocalDensity.current) { slotHeight.toDp() })
+}
+
+@Composable
+private fun TitleText(text: String, notice: Boolean, modifier: Modifier = Modifier, headline: TextStyle? = null,
+    restingTitle: String) {
+    val metrics = campusTitleMetrics(restingTitle, headline)
+    Box(Modifier.fillMaxWidth().height(metrics.height), Alignment.CenterStart) {
+        Text(if (notice) AnnotatedString(text) else metrics.resting, modifier.fillMaxWidth(), textAlign = TextAlign.Start,
+            color = MaterialTheme.colorScheme.onBackground, style = if (notice) metrics.noticeStyle else metrics.restingStyle,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

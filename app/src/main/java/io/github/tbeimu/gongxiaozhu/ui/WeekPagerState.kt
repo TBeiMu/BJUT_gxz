@@ -15,10 +15,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 internal const val WeekSnapFraction = .25f
 // Matches Foundation 1.9.4's anchored draggable threshold; expressed in dp/s at the UI boundary.
 internal const val WeekFlingVelocityDp = 125f
+
+/** A return crosses any distance promptly, rather than adding an animation for every page. */
+internal fun scheduleReturnDuration(distance: Float): Int =
+    (440 + 25 * (ceil(abs(distance)).toInt().coerceAtLeast(1) - 1)).coerceAtMost(640)
 
 /** Stable for the page lifetime: re-touching never replaces the pointer node or restarts at zero. */
 internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val scope: CoroutineScope,
@@ -41,6 +47,8 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
     private var distance = 0f
     private var epoch = 0
     private var animation: Job? = null
+    private var returning = false
+    private var interruptedReturnTarget: Int? = null
     private var disposed = false
     val visualPosition: Float get() = position - edge / height
     val moving: Boolean get() = dragging || settling || abs(position - week) > .001f || abs(edge) > .5f
@@ -67,9 +75,15 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
 
     fun beginGesture() {
         if (disposed) return
-        interruptAnimation()
-        baseWeek = week
+        val interruptedReturn = returning
+        val acceptedTarget = week.takeIf { interruptedReturn }
         val visual = visualPosition
+        interruptAnimation()
+        // A return may still be many pages from its accepted target. A new drag belongs to
+        // the page under the finger, not to that distant target; ordinary flicks keep their
+        // existing accepted-target behavior so rapid one-week gestures never get lost.
+        baseWeek = if (interruptedReturn) visual.roundToInt().coerceIn(1, weekCount) else week
+        interruptedReturnTarget = acceptedTarget
         position = visual.coerceIn(1f, weekCount.toFloat())
         edge = (position - visual) * height
         // Several accepted flicks can be ahead of the animation. Include the touched position
@@ -84,6 +98,12 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
 
     fun dragBy(delta: Float) {
         if (disposed || !dragging) return
+        // Draggable starts immediately during settling, including for a still tap. Only an
+        // actual movement takes ownership from the accepted return destination.
+        if (delta != 0f && interruptedReturnTarget != null) {
+            interruptedReturnTarget = null
+            if (week != baseWeek) { week = baseWeek; onSelected(baseWeek) }
+        }
         distance += delta
         var remaining = delta
         if (edge != 0f && edge * remaining < 0f) {
@@ -101,6 +121,9 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
     fun endGesture(velocity: Float) {
         if (disposed || !dragging) return
         dragging = false
+        val returnTarget = interruptedReturnTarget
+        interruptedReturnTarget = null
+        if (distance == 0f && returnTarget != null) { animateSelect(returnTarget); return }
         val delta = when {
             distance == 0f -> 0
             abs(velocity) >= velocityThreshold -> weekDragDirection(velocity)
@@ -136,9 +159,40 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
         position = target.toFloat()
     }
 
+    /** Accept the destination once, then roll the displayed weeks continuously toward it. */
+    fun animateSelect(number: Int, reducedMotion: Boolean = false) {
+        if (disposed) return
+        if (reducedMotion) { select(number); return }
+        val start = visualPosition
+        interruptAnimation()
+        interruptedReturnTarget = null
+        dragging = false
+        distance = 0f
+        val target = number.coerceIn(1, weekCount)
+        if (target != week) { week = target; onSelected(target) }
+        position = start
+        edge = 0f
+        if (abs(start - target) < .001f) { position = target.toFloat(); return }
+        returning = true
+        settling = true
+        val token = ++epoch
+        animation = scope.launch {
+            try {
+                animate(start, target.toFloat(), animationSpec = tween(
+                    scheduleReturnDuration(start - target), easing = FastOutSlowInEasing)) { value, _ ->
+                    if (!disposed && epoch == token) position = value
+                }
+                if (!disposed && epoch == token) position = target.toFloat()
+            } finally {
+                if (epoch == token) { settling = false; returning = false; animation = null }
+            }
+        }
+    }
+
     fun cancel() {
         if (disposed) return
         interruptAnimation()
+        interruptedReturnTarget = null
         dragging = false
         distance = 0f
         position = week.toFloat()
@@ -146,5 +200,7 @@ internal class WeekPagerState(initialWeek: Int, val weekCount: Int, private val 
     }
 
     fun dispose() { cancel(); disposed = true }
-    private fun interruptAnimation() { epoch++; animation?.cancel(); animation = null; settling = false }
+    private fun interruptAnimation() {
+        epoch++; animation?.cancel(); animation = null; settling = false; returning = false
+    }
 }

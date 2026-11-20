@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WeekPagerStateTest {
@@ -183,6 +184,130 @@ class WeekPagerStateTest {
         pager.beginGesture(); pager.dragBy(-140f); pager.dispose()
         pager.endGesture(-1000f); pager.select(5); advanceUntilIdle()
         assertEquals(3, pager.week)
+        assertFalse(pager.moving)
+    }
+
+    @Test fun returnCommitsOnceAndContinuouslyMovesInEitherDirection() = runTest {
+        for ((start, target) in listOf(7 to 2, 2 to 7, 3 to 2)) {
+            val selected = mutableListOf<Int>()
+            val pager = pager(start, count = 8, selected = selected::add)
+            pager.animateSelect(target)
+            assertEquals(target, pager.week)
+            assertEquals(start.toFloat(), pager.visualPosition, .001f)
+            assertEquals(listOf(target), selected)
+            assertTrue(pager.settling)
+            advanceTimeBy(160)
+            val first = pager.visualPosition
+            assertTrue(first > minOf(start, target) && first < maxOf(start, target))
+            advanceTimeBy(80)
+            val second = pager.visualPosition
+            assertTrue(if (target < start) second < first else second > first)
+            advanceUntilIdle()
+            assertEquals(target.toFloat(), pager.visualPosition, .001f)
+            assertEquals(listOf(target), selected)
+            assertFalse(pager.moving)
+        }
+    }
+
+    @Test fun returnDurationIsBoundedEvenAcrossTheWholeSemester() = runTest {
+        assertEquals(440, scheduleReturnDuration(1f))
+        assertEquals(465, scheduleReturnDuration(2f))
+        assertEquals(640, scheduleReturnDuration(59f))
+        val pager = pager(initial = 60, count = 60)
+        pager.animateSelect(1)
+        advanceTimeBy(320)
+        assertTrue(pager.visualPosition > 1f && pager.visualPosition < 60f)
+        advanceTimeBy(380)
+        assertEquals(1f, pager.visualPosition, .001f)
+        assertFalse(pager.moving)
+    }
+
+    @Test fun newGestureTakesOverTheVisibleWeekDuringALongReturnWithoutJumping() = runTest {
+        val pager = pager(initial = 12, count = 12)
+        pager.animateSelect(1)
+        advanceTimeBy(160)
+        val before = pager.visualPosition
+        val nearest = before.roundToInt()
+        assertTrue(nearest > 2)
+        pager.beginGesture()
+        assertEquals(before, pager.visualPosition, .001f)
+        assertEquals(1, pager.week)
+        advanceTimeBy(800)
+        assertEquals(before, pager.visualPosition, .001f)
+        pager.dragBy(-20f)
+        assertEquals(nearest, pager.week)
+        pager.endGesture(-1500f)
+        val expected = (nearest + 1).coerceAtMost(12)
+        assertEquals(expected, pager.week)
+        advanceUntilIdle()
+        assertEquals(expected.toFloat(), pager.visualPosition, .001f)
+        assertFalse(pager.moving)
+    }
+
+    @Test fun stillTouchDuringReturnKeepsTheAcceptedTargetAndResumesWithoutJumping() = runTest {
+        val selected = mutableListOf<Int>()
+        val pager = pager(initial = 12, count = 12, selected = selected::add)
+        pager.animateSelect(1)
+        advanceTimeBy(160)
+        val before = pager.visualPosition
+        pager.beginGesture()
+        advanceTimeBy(800)
+        assertEquals(before, pager.visualPosition, .001f)
+        assertEquals(1, pager.week)
+        assertEquals(listOf(1), selected)
+        pager.endGesture(0f)
+        assertEquals(before, pager.visualPosition, .001f)
+        assertEquals(1, pager.week)
+        advanceUntilIdle()
+        assertEquals(1f, pager.visualPosition, .001f)
+        assertFalse(pager.moving)
+        assertEquals(listOf(1), selected)
+    }
+
+    @Test fun returnStartsFromTheCurrentDraggedPositionAndNewSelectionWins() = runTest {
+        val pager = pager(initial = 4)
+        pager.beginGesture(); pager.dragBy(-140f)
+        val before = pager.visualPosition
+        pager.animateSelect(1)
+        assertEquals(before, pager.visualPosition, .001f)
+        advanceTimeBy(80)
+        pager.select(5)
+        advanceUntilIdle()
+        assertEquals(5, pager.week)
+        assertEquals(5f, pager.visualPosition, .001f)
+        assertFalse(pager.moving)
+    }
+
+    @Test fun cancelResizeAndDisposeKeepTheAcceptedReturnTargetAndDiscardOldCallbacks() = runTest {
+        for (action in 0..2) {
+            val pager = pager(initial = 6)
+            pager.animateSelect(1)
+            advanceTimeBy(80)
+            when (action) {
+                0 -> pager.cancel()
+                1 -> pager.resize(500f)
+                else -> pager.dispose()
+            }
+            advanceUntilIdle()
+            assertEquals(1, pager.week)
+            assertEquals(1f, pager.visualPosition, .001f)
+            assertFalse(pager.moving)
+        }
+    }
+
+    @Test fun reducedMotionReturnsImmediatelyAndAReplacementReturnOwnsTheAnimation() = runTest {
+        val pager = pager(initial = 6)
+        pager.animateSelect(1, reducedMotion = true)
+        assertEquals(1f, pager.visualPosition, .001f)
+        assertFalse(pager.moving)
+        pager.animateSelect(6)
+        advanceTimeBy(80)
+        val before = pager.visualPosition
+        pager.animateSelect(3)
+        assertEquals(before, pager.visualPosition, .001f)
+        advanceUntilIdle()
+        assertEquals(3, pager.week)
+        assertEquals(3f, pager.visualPosition, .001f)
         assertFalse(pager.moving)
     }
 }

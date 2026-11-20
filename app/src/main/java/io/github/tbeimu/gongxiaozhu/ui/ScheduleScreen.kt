@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import io.github.tbeimu.gongxiaozhu.schedule.*
@@ -82,6 +83,15 @@ private val LessonColumnWidth = 38.dp
 private val SheetShape = RoundedCornerShape(20.dp)
 private val Weekdays = listOf("一", "二", "三", "四", "五", "六", "日")
 
+/** The existing week header's exact text-driven height, without a hidden title composable. */
+@Composable
+internal fun weekScheduleHeaderHeight(): Dp {
+    val line = rememberTextMeasurer().measure("本周 · 11月23日 – 29日",
+        style = MaterialTheme.typography.labelMedium, maxLines = 1).size.height
+    val overline = with(LocalDensity.current) { line.toDp() }.coerceAtLeast(6.dp)
+    return maxOf(76.dp, 10.dp + overline + campusTitleSlotHeight("第 1 周"))
+}
+
 @Composable
 internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport: () -> Unit,
     onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
@@ -90,6 +100,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }) {
     val today = rememberScheduleDate(todayProvider)
     val now by rememberScheduleTime(nowProvider)
+    val reducedMotion = LocalReducedMotion.current
     val schedule = remember(state.data) { state.data.display() }
     var selected by rememberSaveable(schedule?.key, schedule?.term?.key) {
         mutableIntStateOf(schedule?.let { currentScheduleWeek(it, today.value) ?: it.term.currentWeek } ?: 1)
@@ -111,6 +122,7 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     val interactive = lifecycle.isAtLeast(Lifecycle.State.RESUMED) && titleUnobstructed && !showWeeks && !addMenu &&
         details == null && !(state.canCancelImport && cancelImportConfirmation) && state.page == null && !state.blocked
     LaunchedEffect(pager, interactive) { if (!interactive) pager?.cancel() }
+    LaunchedEffect(pager, reducedMotion) { if (reducedMotion) pager?.cancel() }
     val weekNumber = pager?.week ?: 1
     val currentWeek = schedule?.let { currentScheduleWeek(it, today.value) }
     val count = remember(schedule) { schedule?.weeks?.flatMap { it.courses }?.flatMap { it.lessons }?.maxOrNull() ?: 0 }
@@ -172,10 +184,10 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
                     label = "周次列表") {
                     WeekList(schedule, weekNumber, count, enabled = showWeeks, onSelect = { pager!!.select(it); showWeeks = false })
                 }
-                BackToWeekOverlay(currentWeek != null && weekNumber != currentWeek && !showWeeks,
-                    gridBackdrop, schedule.term.weekCount, onClick = {
+                ScheduleReturnOverlay(currentWeek != null && weekNumber != currentWeek && !showWeeks,
+                    gridBackdrop, schedule.term.weekCount, "回到本周", "back_current_week", onClick = {
                         today.value = todayProvider()
-                        currentScheduleWeek(schedule, today.value)?.let { pager!!.select(it) }
+                        currentScheduleWeek(schedule, today.value)?.let { pager!!.animateSelect(it, reducedMotion) }
                     })
             }
         }
@@ -280,22 +292,34 @@ private fun weekDotGroupHeight(height: Dp, weeks: Int): Dp =
     (minOf(height * .55f, 10.dp * weeks) + 6.dp).coerceAtMost(height)
 
 @Composable
-private fun BackToWeekOverlay(visible: Boolean, backdrop: ScheduleBackdrop, weeks: Int, onClick: () -> Unit) {
+internal fun ScheduleReturnOverlay(visible: Boolean, backdrop: ScheduleBackdrop, weeks: Int, label: String, tag: String,
+    onClick: () -> Unit) {
     Layout(modifier = Modifier.fillMaxSize(), content = {
-        AnimatedVisibility(visible = visible,
-            enter = slideInHorizontally(tween(360, easing = FastOutSlowInEasing)) { it },
-            exit = slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it },
-            label = "回到本周从右侧滑入") {
-            FrostedBackToWeekButton(backdrop, enabled = visible, onClick = onClick)
-        }
+        AnimatedScheduleReturnButton(visible, backdrop, label, tag, onClick)
     }) { measurables, constraints ->
         val button = measurables.singleOrNull()?.measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val groupHeight = weekDotGroupHeight(constraints.maxHeight.toDp(), weeks).toPx()
-        val top = ((constraints.maxHeight + groupHeight) / 2f + 4.dp.toPx()).roundToInt()
-            .coerceIn(0, (constraints.maxHeight - (button?.height ?: 0)).coerceAtLeast(0))
+        val top = scheduleReturnButtonTop(constraints.maxHeight, weeks, button?.height ?: 0)
         layout(constraints.maxWidth, constraints.maxHeight) {
             button?.place(constraints.maxWidth - button.width, top)
         }
+    }
+}
+
+/** Keep both return actions on the week view's original dot-relative anchor. */
+internal fun Density.scheduleReturnButtonTop(height: Int, weeks: Int, buttonHeight: Int): Int {
+    val groupHeight = weekDotGroupHeight(height.toDp(), weeks).toPx()
+    return ((height + groupHeight) / 2f + 4.dp.toPx()).roundToInt()
+        .coerceIn(0, (height - buttonHeight).coerceAtLeast(0))
+}
+
+@Composable
+internal fun AnimatedScheduleReturnButton(visible: Boolean, backdrop: ScheduleBackdrop, label: String, tag: String,
+    onClick: () -> Unit) {
+    AnimatedVisibility(visible = visible,
+        enter = slideInHorizontally(tween(360, easing = FastOutSlowInEasing)) { it },
+        exit = slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it },
+        label = "$label 从右侧滑入") {
+        FrostedScheduleReturnButton(backdrop, label, tag = tag, enabled = visible, onClick = onClick)
     }
 }
 
@@ -345,7 +369,7 @@ private fun ScheduleEmpty(title: String, subtitle: String, action: String, onCli
 
 /** A week in miniature for the empty state: the timetable the import will bring. */
 @Composable
-internal fun TimetableMotif(modifier: Modifier, plain: Boolean = false) {
+internal fun TimetableMotif(modifier: Modifier, plain: Boolean = false, animate: Boolean = true) {
     val palette = gxz
     val tones = List(CourseHues.size) { courseTone(it, palette.dark) }
     // day, first row, rows, tone
@@ -353,8 +377,11 @@ internal fun TimetableMotif(modifier: Modifier, plain: Boolean = false) {
         intArrayOf(2, 2, 2, 9), intArrayOf(3, 1, 1, 5), intArrayOf(3, 3, 1, 1), intArrayOf(4, 0, 2, 3), intArrayOf(4, 2, 1, 8))
     // The courses settle into the week one by one, left to right, the way an import fills it.
     val reduced = LocalReducedMotion.current
-    val clock = remember { Animatable(if (reduced) 1f else 0f) }
-    LaunchedEffect(Unit) { clock.animateTo(1f, tween(1500, 150, LinearEasing)) }
+    val clock = remember { Animatable(if (reduced || !animate) 1f else 0f) }
+    LaunchedEffect(animate, reduced) {
+        if (reduced || !animate) clock.snapTo(1f)
+        else if (clock.value < 1f) clock.animateTo(1f, tween(1500, 150, LinearEasing))
+    }
     Canvas(if (plain) modifier else modifier.clip(TileShape).background(palette.well)) {
         val pad = if (plain) 0f else 10.dp.toPx(); val gap = 5.dp.toPx(); val columns = 5; val rows = 4
         val cellW = (size.width - pad * 2 - gap * (columns - 1)) / columns
@@ -364,7 +391,8 @@ internal fun TimetableMotif(modifier: Modifier, plain: Boolean = false) {
         if (!plain) for (day in 0 until columns) for (row in 0 until rows) drawRoundRect(palette.ink.copy(alpha = .04f),
             Offset(pad + day * (cellW + gap), pad + row * (cellH + gap)), Size(cellW, cellH), radius)
         blocks.forEachIndexed { index, (day, row, span, tone) ->
-            val local = (clock.value * 1.8f - index * .1f).coerceIn(0f, 1f)
+            val progress = if (reduced || !animate) 1f else clock.value
+            val local = (progress * 1.8f - index * .1f).coerceIn(0f, 1f)
             if (local <= 0f) return@forEachIndexed
             val eased = Motion.Decelerate.transform(local)
             val alpha = (local * 2.5f).coerceAtMost(1f)
@@ -399,7 +427,7 @@ private fun WeekGrid(schedule: DisplaySchedule, pager: WeekPagerState, count: In
     // One sheet of frosted paper carries the dates, the lesson rail and the courses.
     Column(Modifier.fillMaxSize().glass(palette, SheetShape).padding(horizontal = 2.dp).padding(bottom = 3.dp)
         .testTag("schedule_pager")) {
-        ScheduleDates(schedule, pager, today, intro)
+        ScheduleDates(schedule, pager, today, intro && !pager.moving)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onSizeChanged { pager.resize(it.height.toFloat(), velocityThreshold) }.testTag("week_grid_${week.number}")) {
             // Labels share fixed geometry across all weeks, including unexpected later lessons.
             val rowCount = maxOf(12, count)
@@ -426,7 +454,7 @@ private fun WeekGrid(schedule: DisplaySchedule, pager: WeekPagerState, count: In
                     NowTag(nowAt, now, cell)
                 }
                 WeekLayers(schedule, pager, Modifier.weight(1f).fillMaxHeight().then(gesture).testTag("week_course_viewport")) { current ->
-                    CourseCards(current, count, cell, today, now, toneOrder, intro,
+                    CourseCards(current, count, cell, today, now, toneOrder, intro && !pager.moving,
                         interactive && !pager.moving && current.number == pager.week, onCourse)
                 }
             }

@@ -63,6 +63,12 @@ internal fun Modifier.recordScheduleBackdrop(source: ScheduleBackdrop): Modifier
 @Composable
 internal fun FrostedBackToWeekButton(grid: ScheduleBackdrop, modifier: Modifier = Modifier,
     enabled: Boolean = true, onClick: () -> Unit) {
+    FrostedScheduleReturnButton(grid, "回到本周", modifier, "back_current_week", enabled, onClick)
+}
+
+@Composable
+internal fun FrostedScheduleReturnButton(grid: ScheduleBackdrop, label: String, modifier: Modifier = Modifier,
+    tag: String, enabled: Boolean = true, onClick: () -> Unit) {
     val wallpaper = LocalWallpaperBackdrop.current
     val blurred = rememberGraphicsLayer()
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -73,14 +79,14 @@ internal fun FrostedBackToWeekButton(grid: ScheduleBackdrop, modifier: Modifier 
     val tint = colors.surface.copy(alpha = if (pressed) .56f else .32f)
     val fallback = colors.background
     val textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.sp)
-    val measured = rememberTextMeasurer().measure("回到本周", textStyle, maxLines = 1)
+    val measured = rememberTextMeasurer().measure(label, textStyle, maxLines = 1)
     // Keep a small guard for fractional glyph widths when the user enlarges system text.
     val textWidth = with(LocalDensity.current) { (measured.size.width + 2).toDp() }
     // A 28 dp visible pill within a 48 dp touch target: compact without making it hard to tap.
-    Box(modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("back_current_week")
+    Box(modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag(tag)
         .clickable(enabled = enabled, interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.CenterEnd) {
-        Box(Modifier.heightIn(min = 28.dp).testTag("back_current_week_surface")
+        Box(Modifier.heightIn(min = 28.dp).testTag("${tag}_surface")
             .onGloballyPositioned { origin = it.positionInRoot() }
             .clip(shape).border(.7.dp, colors.onSurface.copy(alpha = .22f), shape)
             .drawWithContent {
@@ -101,7 +107,7 @@ internal fun FrostedBackToWeekButton(grid: ScheduleBackdrop, modifier: Modifier 
                 drawContent()
             }.padding(start = 12.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
             contentAlignment = Alignment.Center) {
-            Text("回到本周", Modifier.widthIn(min = textWidth), style = textStyle,
+            Text(label, Modifier.widthIn(min = textWidth), style = textStyle,
                 maxLines = 1, color = colors.onSurface)
         }
     }

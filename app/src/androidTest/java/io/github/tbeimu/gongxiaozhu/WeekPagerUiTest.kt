@@ -43,18 +43,20 @@ class WeekPagerUiTest {
             complete = SemesterSchedule(identity, ScheduleTerm("2026-2027", "1", count, 1), weeks, 1)))
     }
 
-    private fun show(fontScale: Float = 1f) {
+    private fun show(fontScale: Float = 1f, today: LocalDate = monday, reducedMotion: Boolean = false) {
         compose.runOnUiThread { WallpaperTestActivity.scene = { GongXiaoZhuTheme {
             val density = LocalDensity.current
             val pages = rememberSaveableStateHolder()
-            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale),
+                LocalReducedMotion provides reducedMotion) {
                 if (visible.value) pages.SaveableStateProvider("schedule") { AppBackdrop(WallpaperState()) {
-                    ScheduleScreen(data.value, Modifier.fillMaxSize(), {}, {}, {}, {}, todayProvider = { monday },
+                    ScheduleScreen(data.value, Modifier.fillMaxSize(), {}, {}, {}, {}, todayProvider = { today },
                         titleUnobstructed = unblocked.value)
                 } }
             }
         } } }
-        compose.onNodeWithTag("week_grid_1").assertIsDisplayed()
+        val currentWeek = data.value.data.complete!!.weeks.first { today.toString() in it.dates }.number
+        compose.onNodeWithTag("week_grid_$currentWeek").assertIsDisplayed()
     }
 
     @After fun cleanup() { compose.mainClock.autoAdvance = true; compose.runOnUiThread { WallpaperTestActivity.scene = null } }
@@ -66,6 +68,7 @@ class WeekPagerUiTest {
     private fun title(n: Int) = compose.onNodeWithTag("schedule_week_title").assertTextContains("第 $n 周")
     private fun turnTo(n: Int) {
         compose.onNodeWithContentDescription("选择周次").performClick()
+        compose.onNodeWithTag("week_list").performScrollToIndex(n - 1)
         compose.onNodeWithTag("week_choice_$n").performClick()
         title(n)
     }
@@ -121,6 +124,72 @@ class WeekPagerUiTest {
         settle()
         title(2)
         compose.onNodeWithTag("date_2_0").assertTextEquals("11/9")
+    }
+
+    @Test fun returnToThisWeekRollsIdenticalCoursesDownWithDatesButKeepsRailsFixed() {
+        show(); turnTo(4)
+        val fixedTags = listOf("weekday_0", "lesson_1", "lesson_start_1", "lesson_end_12")
+        val fixed = fixedTags.associateWith { compose.onNodeWithTag(it).fetchSemanticsNode().let { n -> n.id to n.boundsInRoot } }
+        val course = compose.onNodeWithTag("course_4_0_1").fetchSemanticsNode().boundsInRoot
+        val date = compose.onNodeWithTag("date_4_0").fetchSemanticsNode().boundsInRoot
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back_current_week").performClick()
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+        title(1)
+        compose.mainClock.advanceTimeBy(64); compose.waitForIdle()
+        val movedCourse = compose.onNodeWithTag("course_4_0_1").fetchSemanticsNode().boundsInRoot
+        val movedDate = compose.onNodeWithTag("date_4_0").fetchSemanticsNode().boundsInRoot
+        assertTrue("Even identical courses must visibly roll down toward the current week", movedCourse.top > course.top + 5f)
+        assertTrue("The dates must roll in the same direction", movedDate.top > date.top)
+        fixedTags.forEach { tag -> val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+            assertEquals(fixed.getValue(tag).first, node.id)
+            assertEquals(fixed.getValue(tag).second, node.boundsInRoot)
+        }
+        screenshot("return-week-rolling-down")
+        compose.mainClock.advanceTimeBy(700); compose.waitForIdle()
+        title(1)
+        compose.onNodeWithTag("course_1_0_1").assertIsDisplayed()
+        compose.onNodeWithTag("week_courses_4").assertDoesNotExist()
+    }
+
+    @Test fun returnToThisWeekRollsUpFromAnEarlierWeekAndFinishesWithinTheBound() {
+        show(today = monday.plusWeeks(2)); turnTo(1)
+        val viewport = compose.onNodeWithTag("week_course_viewport").fetchSemanticsNode().boundsInRoot
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back_current_week").performClick()
+        compose.mainClock.advanceTimeBy(80); compose.waitForIdle()
+        title(3)
+        val leaving = compose.onNodeWithTag("week_courses_1").fetchSemanticsNode().boundsInRoot
+        assertTrue("An earlier week must move upward", leaving.bottom < viewport.bottom - 5f)
+        compose.mainClock.advanceTimeBy(640); compose.waitForIdle()
+        compose.onNodeWithTag("course_3_0_1").assertIsDisplayed()
+        compose.onNodeWithTag("week_courses_1").assertDoesNotExist()
+    }
+
+    @Test fun farReturnPassesIntermediateWeeksWithoutExtendingTheDuration() {
+        data.value = schedule(count = 24)
+        show(); turnTo(24)
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back_current_week").performClick()
+        compose.mainClock.advanceTimeBy(160); compose.waitForIdle()
+        title(1)
+        assertTrue("A far return must show intermediate weeks, not just crossfade its endpoints",
+            (2..23).any { compose.onAllNodes(hasTestTag("week_courses_$it")).fetchSemanticsNodes().isNotEmpty() })
+        assertTrue("Only adjacent visible weeks may be composed",
+            (1..24).sumOf { compose.onAllNodes(hasTestTag("week_courses_$it")).fetchSemanticsNodes().size } <= 2)
+        compose.mainClock.advanceTimeBy(560); compose.waitForIdle()
+        compose.onNodeWithTag("course_1_0_1").assertIsDisplayed()
+        compose.onNodeWithTag("week_courses_24").assertDoesNotExist()
+    }
+
+    @Test fun reducedMotionReturnsToThisWeekImmediately() {
+        show(reducedMotion = true); turnTo(4)
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back_current_week").performClick()
+        compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+        title(1)
+        compose.onNodeWithTag("course_1_0_1").assertIsDisplayed()
+        compose.onNodeWithTag("week_courses_4").assertDoesNotExist()
     }
 
     @Test fun fastShortFlingAndLongSwipeMoveOnlyOneWeek() {

@@ -1,6 +1,8 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -10,6 +12,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -29,7 +32,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -40,19 +42,26 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -81,6 +90,9 @@ import java.time.LocalTime
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 private val DayNames = listOf("一", "二", "三", "四", "五", "六", "日")
 private val AgendaShape = RoundedCornerShape(20.dp)
@@ -149,29 +161,71 @@ private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImp
     val palette = gxz
     val toneOrder = remember(schedule) { courseToneOrder(schedule) }
     val termDays = remember(schedule) { schedule.weeks.flatMap { it.dates }.toSet() }
+    val dates = remember(schedule) { termDays.map(LocalDate::parse).sorted() }
+    val dateIndices = remember(dates) { dates.withIndex().associate { it.value to it.index } }
+    val motionScope = rememberCoroutineScope()
+    val returnMotion = remember(schedule) { DayReturnState(motionScope) }
+    // Share the outgoing page's vertical position with its return layer; keep only nearby pages.
+    val agendaScrolls = remember(schedule) { linkedMapOf<LocalDate, ScrollState>() }
+    DisposableEffect(returnMotion) { onDispose { returnMotion.dispose() } }
+    val reduced = LocalReducedMotion.current
+    var returnGestureActive by remember(schedule) { mutableStateOf(false) }
+    var returnTarget by remember(schedule) { mutableStateOf<LocalDate?>(null) }
+    var suppressEntranceDate by remember(schedule) { mutableStateOf<LocalDate?>(null) }
     // Today when it is in the term; otherwise the Monday of the school's current week.
     val home = today.value.toString().takeIf { it in termDays }
         ?: schedule.weeks.getOrNull(schedule.term.currentWeek - 1)?.dates?.firstOrNull() ?: schedule.weeks.first().dates.first()
     // null follows today's clock, including after restoration; explicit browsing keeps its date.
     var chosen by rememberSaveable(schedule.key, schedule.term.key) { mutableStateOf<String?>(null) }
     val selected = LocalDate.parse(chosen?.takeIf { it in termDays } ?: home)
+    val selectedScroll = rememberSaveable(schedule.key, schedule.term.key, selected, saver = ScrollState.Saver) {
+        agendaScrolls[selected] ?: ScrollState(0)
+    }
+    fun scrollFor(date: LocalDate): ScrollState {
+        val cached = agendaScrolls.remove(date)
+        val scroll = if (date == selected) selectedScroll else cached ?: ScrollState(0)
+        agendaScrolls[date] = scroll
+        while (agendaScrolls.size > 3) agendaScrolls.remove(agendaScrolls.keys.first())
+        return scroll
+    }
+    val canReturnToToday = selected != today.value && today.value.toString() in termDays
     val week = schedule.weeks.firstOrNull { selected.toString() in it.dates } ?: schedule.weeks.first()
     var details by remember(schedule) { mutableStateOf<List<ScheduleCourse>?>(null) }
     var cancelConfirmation by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val interactive = lifecycle.isAtLeast(Lifecycle.State.RESUMED) && titleUnobstructed && !addMenu &&
+        details == null && !(state.canCancelImport && cancelConfirmation) && state.page == null
     LaunchedEffect(state.canCancelImport) { if (!state.canCancelImport) cancelConfirmation = false }
     ReportDialogVisibility(addMenu || details != null || (state.canCancelImport && cancelConfirmation), onDialogVisibilityChanged)
     LaunchedEffect(titleUnobstructed, state.busy, lifecycle) { if (!titleUnobstructed || state.busy || !lifecycle.isAtLeast(Lifecycle.State.RESUMED)) addMenu = false }
     val haptic = LocalHapticFeedback.current
     fun select(date: LocalDate) {
         if (date.toString() !in termDays) return
+        returnMotion.cancel()
+        returnGestureActive = false
+        returnTarget = null
+        suppressEntranceDate = null
+        if (date != selected) agendaScrolls.remove(date)
         chosen = date.toString().takeUnless { date == today.value }
         if (date != selected) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
     }
+    // Transient animation never owns the saved selection or follows a stale midnight target.
+    LaunchedEffect(interactive, reduced, selected, returnTarget) {
+        if (!interactive || reduced || (returnTarget != null && returnTarget != selected)) {
+            returnMotion.cancel()
+            returnGestureActive = false
+            returnTarget = null
+        }
+    }
+    val latestSelected by rememberUpdatedState(selected)
+    val latestSelect by rememberUpdatedState<(LocalDate) -> Unit>(::select)
+    val latestReduced by rememberUpdatedState(reduced)
     val blocks = remember(week, selected) { dayBlocks(schedule, selected) }
+    val referenceHeaderHeight = weekScheduleHeaderHeight()
+    val agendaBackdrop = rememberScheduleBackdrop()
 
-    Column(Modifier.fillMaxSize()) {
+    Layout(modifier = Modifier.fillMaxSize(), content = {
         Column(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 10.dp)) {
             val isToday = selected == today.value
             Text((if (isToday) "今天 · " else "") + "${selected.monthValue}月${selected.dayOfMonth}日 · 第 ${week.number} 周",
@@ -192,32 +246,126 @@ private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImp
             }
         }
         WeekStrip(week.dates.map(LocalDate::parse), selected, today.value, schedule, toneOrder, ::select)
-        ScheduleStatus(state, onPause, onImport, onCancelImport, cancelConfirmation) {
-            cancelConfirmation = it
-            onDialogVisibilityChanged(it || details != null)
+        Box(Modifier.fillMaxWidth()) {
+            ScheduleStatus(state, onPause, onImport, onCancelImport, cancelConfirmation) {
+                cancelConfirmation = it
+                onDialogVisibilityChanged(it || details != null)
+            }
         }
         // A sideways swipe moves a day; the page follows in the same direction.
         val threshold = with(LocalDensity.current) { 64.dp.toPx() }
-        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(selected, termDays, threshold, addMenu, titleUnobstructed, details, cancelConfirmation) {
-            if (addMenu || !titleUnobstructed || details != null || cancelConfirmation) return@pointerInput
+        Box(Modifier.fillMaxSize().pointerInput(returnMotion, dates, threshold, interactive) {
+            if (!interactive) return@pointerInput
             var distance = 0f
-            detectHorizontalDragGestures(onDragStart = { distance = 0f }, onHorizontalDrag = { change, delta ->
+            var baseDate = latestSelected
+            var tookOverReturn = false
+            detectHorizontalDragGestures(onDragStart = {
+                distance = 0f
+                baseDate = latestSelected
+                tookOverReturn = returnMotion.running
+                if (tookOverReturn) {
+                    baseDate = dates[returnMotion.position.roundToInt().coerceIn(dates.indices)]
+                    returnMotion.cancel()
+                    returnGestureActive = true
+                }
+            }, onHorizontalDrag = { change, delta ->
                 change.consume(); distance += delta
-            }, onDragEnd = { if (abs(distance) >= threshold) select(selected.plusDays(if (distance < 0) 1 else -1)) })
+            }, onDragEnd = {
+                if (tookOverReturn && !returnGestureActive) return@detectHorizontalDragGestures
+                val target = if (abs(distance) >= threshold) {
+                    baseDate.plusDays(if (distance < 0) 1 else -1).takeIf { it in dateIndices } ?: baseDate
+                } else baseDate
+                if (tookOverReturn) {
+                    val from = returnMotion.position
+                    latestSelect(target)
+                    suppressEntranceDate = target
+                    returnTarget = target
+                    returnMotion.animateTo(from, dateIndices.getValue(target), latestReduced)
+                } else if (abs(distance) >= threshold) latestSelect(target)
+            }, onDragCancel = {
+                if (tookOverReturn) {
+                    returnMotion.cancel()
+                    returnGestureActive = false
+                }
+            })
         }) {
-            AnimatedContent(selected, Modifier.fillMaxSize(), transitionSpec = {
-                val forward = targetState > initialState
-                (slideInHorizontally(tween(Motion.LONG, easing = Motion.Emphasized)) { if (forward) it / 4 else -it / 4 } +
-                    fadeIn(tween(Motion.MEDIUM, 40))) togetherWith
-                    (slideOutHorizontally(tween(Motion.MEDIUM, easing = Motion.Accelerate)) { if (forward) -it / 6 else it / 6 } +
-                        fadeOut(tween(Motion.SHORT)))
-            }, label = "切换日期") { date ->
-                DayAgenda(date, schedule, today.value, now, toneOrder) { if (!addMenu && titleUnobstructed) { details = it; onDialogVisibilityChanged(true) } }
+            Box(Modifier.fillMaxSize().clipToBounds().recordScheduleBackdrop(agendaBackdrop)
+                .testTag("today_course_viewport")) {
+                if (returnMotion.running || returnGestureActive) {
+                    ReturningDayLayers(returnMotion, dates) { date ->
+                        DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), entranceEnabled = false,
+                            coursesEnabled = false, onCourse = {})
+                    }
+                } else AnimatedContent(selected, Modifier.fillMaxSize(), transitionSpec = {
+                    if (reduced) EnterTransition.None togetherWith ExitTransition.None else {
+                        val forward = targetState > initialState
+                        (slideInHorizontally(tween(Motion.LONG, easing = Motion.Emphasized)) { if (forward) it / 4 else -it / 4 } +
+                            fadeIn(tween(Motion.MEDIUM, 40))) togetherWith
+                            (slideOutHorizontally(tween(Motion.MEDIUM, easing = Motion.Accelerate)) { if (forward) -it / 6 else it / 6 } +
+                                fadeOut(tween(Motion.SHORT)))
+                    }
+                }, label = "切换日期") { date ->
+                    DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), entranceEnabled = date != suppressEntranceDate) {
+                        if (!addMenu && titleUnobstructed) { details = it; onDialogVisibilityChanged(true) }
+                    }
+                }
             }
+        }
+            AnimatedScheduleReturnButton(canReturnToToday, agendaBackdrop, "返回今日", "back_current_day") {
+                val from = if (returnMotion.running || returnGestureActive) returnMotion.position
+                    else dateIndices.getValue(selected).toFloat()
+                val currentDate = todayProvider()
+                today.value = currentDate
+                if (currentDate !in dateIndices) {
+                    returnMotion.cancel()
+                    returnGestureActive = false
+                    returnTarget = null
+                    return@AnimatedScheduleReturnButton
+                }
+                select(currentDate)
+                suppressEntranceDate = currentDate
+                returnTarget = currentDate
+                returnMotion.animateTo(from, dateIndices.getValue(currentDate), reduced)
+            }
+    }) { measurables, constraints ->
+        // Measure the same four content slots as the original Column, then place the return
+        // action against the week view's reference frame in this page's absolute coordinates.
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val header = measurables[0].measure(loose)
+        val strip = measurables[1].measure(loose.copy(maxHeight = (constraints.maxHeight - header.height).coerceAtLeast(0)))
+        val status = measurables[2].measure(loose.copy(maxHeight = (constraints.maxHeight - header.height - strip.height).coerceAtLeast(0)))
+        val bodyTop = header.height + strip.height + status.height
+        val remaining = (constraints.maxHeight - bodyTop).coerceAtLeast(0)
+        val body = measurables[3].measure(constraints.copy(minHeight = remaining, maxHeight = remaining))
+        val button = measurables.getOrNull(4)?.measure(loose)
+        val referenceTop = referenceHeaderHeight.roundToPx() + status.height + 4.dp.roundToPx()
+        val referenceHeight = (constraints.maxHeight - referenceTop - 10.dp.roundToPx()).coerceAtLeast(0)
+        val buttonTop = referenceTop + scheduleReturnButtonTop(referenceHeight, schedule.term.weekCount, button?.height ?: 0)
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            header.place(0, 0)
+            strip.place(0, header.height)
+            status.place(0, header.height + strip.height)
+            body.place(0, bodyTop)
+            button?.place(constraints.maxWidth - button.width, buttonTop)
         }
     }
     details?.let { CourseDetails(it, toneOrder, onDismiss = { details = null }, editable = !state.busy,
         onEdit = { course, delete -> details = null; onEditCourse(course, delete) }) }
+}
+
+/** Only the two horizontal neighbours are composed, even when returning across many months. */
+@Composable
+private fun ReturningDayLayers(motion: DayReturnState, dates: List<LocalDate>, content: @Composable (LocalDate) -> Unit) {
+    val visible by remember(motion, dates) { derivedStateOf {
+        floor(motion.position).toInt().coerceIn(dates.indices)..ceil(motion.position).toInt().coerceIn(dates.indices)
+    } }
+    Box(Modifier.fillMaxSize()) {
+        visible.forEach { index -> key(index) {
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                translationX = (index - motion.position) * size.width
+            }.testTag("return_day_$index")) { content(dates[index]) }
+        } }
+    }
 }
 
 private fun dayBlocks(schedule: DisplaySchedule, date: LocalDate): List<CourseBlock> {
@@ -265,13 +413,15 @@ private fun WeekStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalD
 
 @Composable
 private fun DayAgenda(date: LocalDate, schedule: DisplaySchedule, today: LocalDate, now: LocalTime,
-    toneOrder: Map<String, Int>, onCourse: (List<ScheduleCourse>) -> Unit) {
+    toneOrder: Map<String, Int>, scroll: ScrollState, entranceEnabled: Boolean = true, coursesEnabled: Boolean = true,
+    onCourse: (List<ScheduleCourse>) -> Unit) {
     val palette = gxz
     val blocks = remember(schedule, date) { dayBlocks(schedule, date) }
     val isToday = date == today
     val next = if (isToday) blocks.firstOrNull { b -> lessonSpan(b.first, b.last)?.let { now < it.first } == true } else null
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 18.dp, bottom = 96.dp)) {
-        if (blocks.isEmpty()) EmptyDay(date, isToday, schedule)
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("agenda_scroll_$date")
+        .padding(start = 24.dp, end = 24.dp, top = 18.dp, bottom = 96.dp)) {
+        if (blocks.isEmpty()) EmptyDay(date, isToday, schedule, entranceEnabled)
         var previousEnd: LocalTime? = null
         blocks.forEachIndexed { index, block ->
             val span = lessonSpan(block.first, block.last)
@@ -283,20 +433,22 @@ private fun DayAgenda(date: LocalDate, schedule: DisplaySchedule, today: LocalDa
                 block == next -> CardState.NEXT
                 else -> CardState.AHEAD
             }
-            AgendaRow(block, span, state, now, toneOrder, Modifier.entrance(index * Motion.STAGGER + 40, distance = 14.dp)) { onCourse(block.courses) }
+            AgendaRow(block, span, state, now, toneOrder, Modifier.entrance(index * Motion.STAGGER + 40, distance = 14.dp,
+                enabled = entranceEnabled), enabled = coursesEnabled) { onCourse(block.courses) }
             previousEnd = span?.second
         }
         previousEnd?.let { end ->
             Text(if (isToday && now >= end) "今天的课都上完了" else "${end.format(Clock)} 之后${if (isToday) "今天" else ""}没有课了",
                 Modifier.padding(start = 62.dp, top = 2.dp), fontSize = 12.sp, color = palette.inkFaint)
         }
-        if (isToday) Tomorrow(date.plusDays(1), schedule, toneOrder, Modifier.entrance((blocks.size + 1) * Motion.STAGGER + 40))
+        if (isToday) Tomorrow(date.plusDays(1), schedule, toneOrder,
+            Modifier.entrance((blocks.size + 1) * Motion.STAGGER + 40, enabled = entranceEnabled))
     }
 }
 
 @Composable
 private fun AgendaRow(block: CourseBlock, span: Pair<LocalTime, LocalTime>?, state: CardState, now: LocalTime,
-    toneOrder: Map<String, Int>, modifier: Modifier, onClick: () -> Unit) {
+    toneOrder: Map<String, Int>, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     val palette = gxz
     val past = state == CardState.PAST
     val live = state == CardState.LIVE
@@ -313,7 +465,7 @@ private fun AgendaRow(block: CourseBlock, span: Pair<LocalTime, LocalTime>?, sta
         val interaction = remember { MutableInteractionSource() }
         Column(Modifier.weight(1f).pressScale(interaction, .97f).clip(AgendaShape)
             .background(if (past) palette.ink.copy(alpha = if (palette.dark) .06f else .045f) else tone.fill)
-            .clickable(interaction, LocalIndication.current, onClick = onClick)
+            .clickable(interaction, LocalIndication.current, enabled = enabled, onClick = onClick)
             .testTag("agenda_course_${block.day}_${block.first}")
             .padding(horizontal = if (live) 20.dp else 18.dp, vertical = if (live) 20.dp else 16.dp)) {
             val title = if (past) palette.inkFaint else tone.text
@@ -375,15 +527,15 @@ private fun Gap(from: LocalTime, to: LocalTime) {
 }
 
 @Composable
-private fun EmptyDay(date: LocalDate, isToday: Boolean, schedule: DisplaySchedule) {
+private fun EmptyDay(date: LocalDate, isToday: Boolean, schedule: DisplaySchedule, entranceEnabled: Boolean) {
     val palette = gxz
     // Point to the next class, so an empty day still answers "when do I next need to be somewhere?"
     val upcoming = remember(schedule, date) {
         generateSequence(date.plusDays(1)) { it.plusDays(1) }.take(60)
             .firstNotNullOfOrNull { day -> dayBlocks(schedule, day).firstOrNull()?.let { day to it } }
     }
-    Column(Modifier.fillMaxWidth().padding(top = 36.dp).entrance(40), horizontalAlignment = Alignment.CenterHorizontally) {
-        TimetableMotif(Modifier.width(180.dp).height(96.dp), plain = true)
+    Column(Modifier.fillMaxWidth().padding(top = 36.dp).entrance(40, enabled = entranceEnabled), horizontalAlignment = Alignment.CenterHorizontally) {
+        TimetableMotif(Modifier.width(180.dp).height(96.dp), plain = true, animate = entranceEnabled)
         Text(if (isToday) "今天没有课" else "这一天没有课", Modifier.padding(top = 22.dp), fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold, color = palette.ink)
         upcoming?.let { (day, block) ->
