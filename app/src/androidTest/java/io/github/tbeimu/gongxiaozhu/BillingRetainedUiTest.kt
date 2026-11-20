@@ -59,7 +59,7 @@ class BillingRetainedUiTest {
     @Test fun retainedValuesAndFailureStatusKeepTheDarkSmallScreenLayoutStill() = retainedLayout(dark = true)
 
     private fun retainedLayout(dark: Boolean) {
-        val billing = mutableStateOf(BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询完成"))
+        val billing = mutableStateOf(BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询成功"))
         val fontScale = mutableStateOf(1f)
         var expectedGap = 0f
         compose.setContent {
@@ -92,7 +92,7 @@ class BillingRetainedUiTest {
         for (scale in listOf(1f, 1.8f)) {
             compose.runOnIdle {
                 fontScale.value = scale
-                billing.value = BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询完成")
+                billing.value = BillingUiState(snapshot = snapshot, loadedAt = loadedAt, message = "查询成功")
             }
             val original = fixed.associateWith(::bounds)
             compose.runOnIdle { billing.value = billing.value.copy(running = true, message = "正在查询", devicesActionable = false) }
@@ -102,8 +102,13 @@ class BillingRetainedUiTest {
             val loader = compose.onNodeWithTag("billing_status_loader").fetchSemanticsNode().boundsInRoot
             val text = compose.onNodeWithTag("billing_status").fetchSemanticsNode().boundsInRoot
             assertEquals(expectedGap, text.left - loader.right, 1f)
+            compose.runOnIdle { billing.value = billing.value.copy(running = false, message = "查询成功", devicesActionable = true) }
+            compose.onNodeWithTag("billing_status").assertTextEquals("查询成功").assertIsDisplayed()
+            assertValuesAndTime()
+            fixed.forEach { assertEquals("Completing a refresh must not move $it at font $scale", original[it], bounds(it)) }
+            compose.runOnIdle { billing.value = billing.value.copy(running = true, message = "正在查询", devicesActionable = false) }
             compose.runOnIdle { billing.value = billing.value.copy(running = false, queryFailed = true, message = BillingProblem.CONNECTION.hint) }
-            compose.onNodeWithTag("billing_status").assertTextEquals("查询失败").assertHasNoClickAction()
+            compose.onNodeWithTag("billing_status").assertTextEquals("查询失败").assertIsDisplayed().assertHasNoClickAction()
             assertValuesAndTime()
             fixed.forEach { assertEquals("A failed refresh must not move $it at font $scale", original[it], bounds(it)) }
             val statusLayouts = mutableListOf<TextLayoutResult>()
@@ -144,9 +149,9 @@ class BillingRetainedUiTest {
                         compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                     }
             }
-            compose.runOnIdle { billing.value = billing.value.copy(queryFailed = false, message = "查询完成", loadedAt = loadedAt + 60_000,
+            compose.runOnIdle { billing.value = billing.value.copy(queryFailed = false, message = "查询成功", loadedAt = loadedAt + 60_000,
                 snapshotFromCache = false, devicesActionable = true) }
-            compose.onNodeWithTag("billing_status").assertTextEquals("查询完成")
+            compose.onNodeWithTag("billing_status").assertTextEquals("查询成功").assertIsDisplayed()
             compose.onNodeWithText(timestamp(loadedAt + 60_000), substring = false).assertExists()
             fixed.forEach { assertEquals("A successful refresh must not move $it at font $scale", original[it], bounds(it)) }
         }

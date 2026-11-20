@@ -108,10 +108,12 @@ class BillingRetainedControllerTest {
         val firstTime = h.state.loadedAt
         assertEquals(demoSnapshot, h.state.snapshot); assertEquals(demoSnapshot, h.cache.value?.snapshot)
         assertFalse(h.state.queryFailed); assertFalse(h.state.snapshotFromCache); assertTrue(h.state.devicesActionable)
+        assertFalse(h.state.running); assertEquals("查询成功", h.state.message)
         session.response = { throw BillingException(BillingProblem.CONNECTION) }
         h.controller.query(); runCurrent()
         assertEquals(demoSnapshot, h.state.snapshot); assertEquals(firstTime, h.state.loadedAt)
         assertTrue(h.state.queryFailed); assertFalse(h.state.devicesActionable)
+        assertFalse(h.state.running); assertNotEquals("查询成功", h.state.message)
         assertEquals(demoSnapshot, h.cache.value?.snapshot)
         val latest = demoSnapshot.copy(metrics = mapOf("已用流量" to BillingMetric("9876", "MB")))
         session.response = { latest }
@@ -119,7 +121,40 @@ class BillingRetainedControllerTest {
         assertEquals(latest, h.state.snapshot); assertEquals(latest, h.cache.value?.snapshot)
         assertEquals(h.state.loadedAt, h.cache.value?.loadedAt)
         assertFalse(h.state.queryFailed); assertTrue(h.state.devicesActionable)
+        assertFalse(h.state.running); assertEquals("查询成功", h.state.message)
         assertEquals(3, session.refreshes); assertEquals(0, h.storageFailures)
+    }
+
+    @Test fun ordinaryAndWebSuccessEndWithAnExplicitStatusWhilePreservingNonblankNotices() = runTest {
+        val warning = "刷新未确认，显示网页数据"
+        for (notice in listOf(null, "", " \t\n", warning)) {
+            for (web in listOf(false, true)) {
+                val h = harness(); val session = Session()
+                val snapshot = demoSnapshot.copy(notice = notice)
+                val expected = if (notice.isNullOrBlank()) "查询成功" else notice
+                val context = "Web: $web, notice: ${notice?.replace("\n", "\\n")}"
+                h.configure(session)
+                if (web) {
+                    session.response = { throw BillingException(BillingProblem.UNCONFIRMED) }
+                    h.controller.query(); runCurrent()
+                    assertTrue(h.state.offerWeb)
+                    h.controller.openWeb(); runCurrent(); assertNotNull(h.state.webPage)
+                    session.webResult = { BillingWebResult.Success(snapshot) }
+                    h.controller.submitWeb("fictional-page", "fictional-password", "")
+                    assertEquals("正在网页登录", h.state.message)
+                } else {
+                    session.response = { snapshot }
+                    h.controller.query()
+                    assertEquals("正在查询", h.state.message)
+                }
+                assertTrue(context, h.state.running); assertFalse(h.state.queryFailed)
+                runCurrent()
+                assertFalse(context, h.state.running); assertFalse(h.state.queryFailed)
+                assertEquals(context, expected, h.state.message)
+                assertEquals(snapshot, h.state.snapshot); assertEquals(snapshot, h.cache.value?.snapshot)
+                assertNull(h.state.webPage); assertFalse(h.state.offerWeb)
+            }
+        }
     }
 
     @Test fun coldRestoreSurvivesFirstWifiAndFailedAutomaticRefreshWithoutAddingAnAutomaticAttempt() = runTest {
@@ -127,12 +162,49 @@ class BillingRetainedControllerTest {
         val session = Session().apply { response = { throw BillingException(BillingProblem.CONNECTION) } }
         h.controller.accountChanged("account-a"); runCurrent()
         assertEquals(demoSnapshot, h.state.snapshot); assertEquals(1234L, h.state.loadedAt)
+        assertFalse(h.state.running); assertNotEquals("查询成功", h.state.message)
         h.controller.enterForeground(); h.controller.setVisible(true)
         h.controller.wifiChanged(wifi(session)); runCurrent()
         assertEquals(demoSnapshot, h.state.snapshot); assertEquals(1234L, h.state.loadedAt)
         assertTrue(h.state.queryFailed); assertTrue(h.state.snapshotFromCache); assertFalse(h.state.devicesActionable)
+        assertFalse(h.state.running); assertNotEquals("查询成功", h.state.message)
         repeat(3) { h.controller.setVisible(false); h.controller.setVisible(true); h.controller.enterForeground(); runCurrent() }
         assertEquals(1, session.refreshes); assertEquals(demoSnapshot, cache.value?.snapshot)
+    }
+
+    @Test fun observationPauseBeforeLeavingForegroundDiscardsLateOrdinaryAndWebSuccess() = runTest {
+        for (web in listOf(false, true)) {
+            val cache = Cache().apply { value = cached() }; val h = harness(cache)
+            val session = Session(); h.configure(session); runCurrent()
+            val retained = cache.value!!; val gate = CompletableDeferred<Unit>()
+            val lateSnapshot = demoSnapshot.copy(metrics = mapOf("账户余额" to BillingMetric("999", "元")))
+            if (web) {
+                session.response = { throw BillingException(BillingProblem.UNCONFIRMED) }
+                h.controller.query(); runCurrent()
+                h.controller.openWeb(); runCurrent(); assertNotNull(h.state.webPage)
+                session.webResult = {
+                    withContext(NonCancellable) { gate.await() }
+                    BillingWebResult.Success(lateSnapshot)
+                }
+                h.controller.submitWeb("fictional-page", "fictional-password", "")
+            } else {
+                session.response = { withContext(NonCancellable) { gate.await() }; lateSnapshot }
+                h.controller.query()
+            }
+            runCurrent(); assertTrue("Web: $web", h.state.running)
+            assertEquals(if (web) "正在网页登录" else "正在查询", h.state.message)
+            h.controller.wifiObservationPaused(); h.controller.leaveForeground(); runCurrent()
+            assertFalse(h.state.running); assertFalse(h.state.queryFailed)
+            assertEquals("查询已暂停，请重查", h.state.message)
+            assertEquals(retained.snapshot, h.state.snapshot); assertEquals(retained.loadedAt, h.state.loadedAt)
+            assertEquals(retained, cache.value); assertTrue(h.state.snapshotFromCache)
+            assertFalse(h.state.devicesActionable); assertNull(h.state.webPage)
+            val paused = h.state
+            gate.complete(Unit); runCurrent()
+            assertEquals("Late result after pause, web: $web", paused, h.state)
+            assertNotEquals("查询成功", h.state.message); assertFalse(h.state.running)
+            assertEquals(retained, cache.value); assertEquals(0, cache.saveAttempts)
+        }
     }
 
     @Test fun unconfirmedLoginKeepsItsSpecificHintForOrdinaryAndWebQueries() = runTest {
@@ -328,6 +400,7 @@ class BillingRetainedControllerTest {
         h.controller.wifiChanged(null); runCurrent()
         assertEquals(original.snapshot, h.state.snapshot); assertEquals(original.loadedAt, h.state.loadedAt)
         assertEquals(original, h.cache.value); assertFalse(h.state.running); assertFalse(h.state.devicesActionable)
+        assertNotEquals("A cancelled query must not report success", "查询成功", h.state.message)
         val latest = demoSnapshot.copy(metrics = mapOf("账户余额" to BillingMetric("12.5", "元")))
         val replacement = Session().apply { response = { latest } }
         h.controller.wifiChanged(wifi(replacement, "replacement-wifi")); h.controller.query(); runCurrent()
@@ -335,6 +408,8 @@ class BillingRetainedControllerTest {
         gate.complete(Unit); runCurrent()
         assertEquals(original.snapshot, h.state.snapshot); assertEquals(original.loadedAt, h.state.loadedAt)
         assertEquals(original, h.cache.value); assertFalse(h.state.devicesActionable)
+        assertFalse(h.state.running)
+        assertNotEquals("A late cancelled result must not report success", "查询成功", h.state.message)
         h.controller.query(); runCurrent()
         assertEquals(1, replacement.refreshes); assertEquals(latest, h.state.snapshot)
         assertEquals(latest, h.cache.value?.snapshot); assertTrue(h.state.devicesActionable)

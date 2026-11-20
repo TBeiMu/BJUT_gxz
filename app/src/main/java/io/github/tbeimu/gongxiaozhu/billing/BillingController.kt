@@ -101,7 +101,7 @@ class BillingController(
     fun wifiObservationPaused() {
         wifiObserved = false
         // Retain the last display and network identity, but never reuse its query session.
-        reset(state.message, clearData = false)
+        reset(if (state.running) "查询已暂停，请重查" else state.message, clearData = false)
     }
 
     fun enterForeground() {
@@ -384,7 +384,8 @@ class BillingController(
 
     private fun queriedSuccessfully(id: String, result: BillingSnapshot, current: BillingSession) {
         val loadedAt = System.currentTimeMillis()
-        emit(BillingUiState(snapshot = result, loadedAt = loadedAt, message = result.notice.orEmpty(),
+        emit(BillingUiState(snapshot = result, loadedAt = loadedAt,
+            message = result.notice?.takeIf { it.isNotBlank() } ?: "查询成功",
             diagnostics = current.diagnostics, devicesActionable = true))
         saveCached(id, result, loadedAt)
     }
