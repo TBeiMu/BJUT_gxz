@@ -2,19 +2,19 @@
 
 北京工业大学 Android 校园助手。整学期课表、校园网登录和资费查询集中在一个 App 中。
 
-**v0.5.7 发布准备 · Android 12 及以上 · versionCode 38**
+**v0.5.7 正式版 · Android 12 及以上 · versionCode 38**
 
 用户已确认 v0.4.8 的主要功能基本齐全并可用。项目进入维护与体验优化，源码仓库为 [TBeiMu/BJUT_gxz](https://github.com/TBeiMu/BJUT_gxz)。
 
 v0.5.7 将账号管理与连接操作合并到“校园网”，改进旋转后的滚动恢复，并为尚未取得姓名的账号在每次版本升级后重新提供一次查名机会；联网查名仍须先确认当前 WiFi 校园认证成功。同时合入课程安排、注销结果、网络监听、认证服务、更新通知及系统动画设置的维护修复。详见[本版更新说明](docs/releases/v0.5.7.md)与[验证记录](docs/testing/v0.5.7验证.md)。
 
-本版正在准备正式签名与线上附件核验，目前公开下载仍为 v0.5.6／37。此前课程编辑防误退、撤销、删除范围预览、GitHub 入口及“个性化”命名继续保留；历史修订见 [v0.5.6 更新说明](docs/releases/v0.5.6.md)。
+v0.5.7 已发布固定签名正式 APK，应用内更新信息与公开附件已核验一致。此前课程编辑防误退、撤销、删除范围预览、GitHub 入口及“个性化”命名继续保留；历史修订见 [v0.5.6 更新说明](docs/releases/v0.5.6.md)。
 
 ## 下载与安装
 
-[当前公开的 v0.5.6 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [当前公开版 SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.6/SHA256SUMS.txt)
+[下载 v0.5.7 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.7/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.7/SHA256SUMS.txt)
 
-v0.5.7 发布后，v0.4.9 及以上可通过“我的 → 检查更新”升级，也可手动下载后覆盖安装；versionCode 从 37 增至 38，可识别为新版，无需沿用 v0.5.6 同版本修订的手动安装方式。
+v0.4.9 及以上可通过“我的 → 检查更新”升级，也可手动下载后覆盖安装；versionCode 从 37 增至 38，可识别为新版，无需沿用 v0.5.6 同版本修订的手动安装方式。
 
 下载后使用手机的浏览器或文件管理器打开 APK，按系统提示允许“安装未知应用”。已有正式版直接覆盖安装，账号、默认账号、课表和设置会保留；请勿先卸载或清除应用数据。调试版与正式版独立安装。
 
