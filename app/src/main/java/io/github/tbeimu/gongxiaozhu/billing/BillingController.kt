@@ -92,7 +92,9 @@ class BillingController(
         hadWifiSnapshot = true
         wifiObserved = true
         wifi = connection
-        if (changed && !firstSnapshot) reset(if (connection == null) "未连接 WiFi" else "网络已变，请重查", clearData = true)
+        // The saved figures belong to the account; only its live session belongs to this WiFi.
+        if (changed && !firstSnapshot) reset(if (connection == null) "未连接 WiFi" else "网络已变，请重查",
+            clearData = false, queryFailed = false)
         maybeQuery()
     }
 
@@ -362,7 +364,8 @@ class BillingController(
         reset(message, clearData = true)
     }
 
-    private fun reset(message: String, clearData: Boolean, clearCache: Boolean = clearData) {
+    private fun reset(message: String, clearData: Boolean, clearCache: Boolean = clearData,
+        queryFailed: Boolean = state.queryFailed) {
         val actualMessage = if (offlineSent) {
             if (offlineConfirmed) "已注销；网络已变，请重查"
             else BillingProblem.OFFLINE.hint
@@ -374,7 +377,7 @@ class BillingController(
         if (clearCache) invalidateCache()
         emit(if (clearData) BillingUiState(message = actualMessage, devicesActionable = false) else state.copy(running = false, captcha = null,
             confirmation = null, offerWeb = false, webPage = null, diagnostics = emptyList(),
-            devicesActionable = false, message = actualMessage))
+            devicesActionable = false, queryFailed = queryFailed, message = actualMessage))
         offlineSent = false
         offlineConfirmed = false
     }

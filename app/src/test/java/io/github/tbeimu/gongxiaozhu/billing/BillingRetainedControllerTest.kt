@@ -8,6 +8,9 @@ import io.github.tbeimu.gongxiaozhu.network.WifiConnection
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -190,15 +193,14 @@ class BillingRetainedControllerTest {
         assertFalse(h.state.queryFailed); assertFalse(h.state.snapshotFromCache)
     }
 
-    @Test fun queuedRestoresCannotRepopulateDataAfterAccountForceSwitchOrRealWifiChange() = runTest {
-        for (reason in listOf("force", "account", "wifi")) {
+    @Test fun queuedRestoresCannotRepopulateDataAfterAccountForceOrSwitch() = runTest {
+        for (reason in listOf("force", "account")) {
             val io = QueuedIo(); val cache = Cache().apply { value = cached(); ignoreLoadValidity = true }
             val h = Harness(backgroundScope, cache, io); val session = Session()
             h.configure(session); runCurrent()
             when (reason) {
                 "force" -> h.controller.accountChanged("account-a", force = true)
                 "account" -> h.controller.accountChanged("account-b")
-                else -> h.controller.wifiChanged(wifi(session, "replacement-wifi"))
             }
             settle(io)
             assertNull("Invalidation: $reason", h.state.snapshot)
@@ -206,8 +208,8 @@ class BillingRetainedControllerTest {
         }
     }
 
-    @Test fun queuedSuccessfulWritesCannotOutliveAccountForceSwitchOrRealWifiChange() = runTest {
-        for (reason in listOf("force", "account", "wifi")) {
+    @Test fun queuedSuccessfulWritesCannotOutliveAccountForceOrSwitch() = runTest {
+        for (reason in listOf("force", "account")) {
             val io = QueuedIo(); val cache = Cache(); val h = Harness(backgroundScope, cache, io)
             val session = Session(); h.configure(session); settle(io)
             h.controller.query(); runCurrent()
@@ -215,11 +217,155 @@ class BillingRetainedControllerTest {
             when (reason) {
                 "force" -> h.controller.accountChanged("account-a", force = true)
                 "account" -> h.controller.accountChanged("account-b")
-                else -> h.controller.wifiChanged(null)
             }
             settle(io)
             assertNull("Invalidation: $reason", cache.value)
             assertNull(h.state.snapshot); assertFalse(h.state.devicesActionable)
+        }
+    }
+
+    @Test fun foregroundWifiChangesRetainDisplayAndDiskUntilARealSuccessfulQueryReplacesThem() = runTest {
+        val h = harness(); val first = Session()
+        h.configure(first, visible = true); runCurrent()
+        val loadedAt = h.state.loadedAt
+        val retained = h.cache.value
+        assertEquals(1, first.refreshes); assertTrue(h.state.devicesActionable)
+        h.controller.requestOffline(demoDevice.sessionId); runCurrent(); assertNotNull(h.state.confirmation)
+        h.controller.wifiChanged(null); runCurrent()
+        assertTrue(first.closed); assertEquals(demoSnapshot, h.state.snapshot); assertEquals(loadedAt, h.state.loadedAt)
+        assertEquals(retained, h.cache.value); assertNull(h.state.confirmation); assertFalse(h.state.devicesActionable)
+        h.controller.requestOffline(demoDevice.sessionId); h.controller.confirmOffline(); runCurrent()
+        assertEquals(0, first.offlines)
+        val reconnect = Session().apply { response = { throw BillingException(BillingProblem.CONNECTION) } }
+        h.controller.wifiChanged(wifi(reconnect)); runCurrent()
+        assertEquals(0, reconnect.refreshes); assertEquals(retained, h.cache.value)
+        h.controller.query(); runCurrent()
+        assertEquals(1, reconnect.refreshes); assertTrue(h.state.queryFailed)
+        assertEquals(demoSnapshot, h.state.snapshot); assertEquals(loadedAt, h.state.loadedAt)
+        assertEquals(retained, h.cache.value); assertFalse(h.state.devicesActionable)
+        h.controller.wifiChanged(null); runCurrent()
+        assertFalse("A fresh disconnect hint must replace an obsolete generic query failure", h.state.queryFailed)
+        assertTrue(h.state.message.contains("未连接 WiFi"))
+        assertEquals(demoSnapshot, h.state.snapshot); assertEquals(loadedAt, h.state.loadedAt)
+        assertEquals(retained, h.cache.value)
+        val replacement = Session()
+        h.controller.wifiChanged(wifi(replacement, "replacement-wifi")); runCurrent()
+        assertFalse(h.state.queryFailed); assertTrue(h.state.message.contains("网络已变"))
+        assertEquals(0, replacement.refreshes); assertEquals(retained, h.cache.value)
+        h.controller.requestOffline(demoDevice.sessionId); h.controller.confirmOffline(); runCurrent()
+        assertEquals(0, replacement.tips); assertEquals(0, replacement.offlines)
+        h.controller.query(); runCurrent()
+        assertEquals(1, replacement.refreshes); assertTrue(h.state.devicesActionable)
+        assertEquals(demoSnapshot, h.cache.value?.snapshot)
+        assertEquals(h.state.loadedAt, h.cache.value?.loadedAt)
+        assertEquals(1, first.refreshes)
+    }
+
+    @Test fun historicalResultRestoresAfterDisconnectAndControllerRecreationWithoutLogoutAuthority() = runTest {
+        val h = harness(); val first = Session(); h.configure(first)
+        h.controller.query(); runCurrent()
+        val retained = h.cache.value!!
+        h.controller.wifiChanged(null); runCurrent()
+        assertEquals(retained, h.cache.value)
+        val restarted = harness(h.cache)
+        restarted.controller.accountChanged("account-a"); restarted.controller.wifiChanged(null)
+        restarted.controller.enterForeground(); restarted.controller.setVisible(true); runCurrent()
+        assertEquals(retained.snapshot, restarted.state.snapshot); assertEquals(retained.loadedAt, restarted.state.loadedAt)
+        assertTrue(restarted.state.snapshotFromCache); assertFalse(restarted.state.devicesActionable)
+        restarted.controller.requestOffline(demoDevice.sessionId); restarted.controller.confirmOffline(); runCurrent()
+        assertNull(restarted.state.confirmation)
+        val reconnect = Session().apply { response = { throw BillingException(BillingProblem.CONNECTION) } }
+        restarted.controller.wifiChanged(wifi(reconnect)); runCurrent()
+        assertEquals(1, reconnect.refreshes); assertTrue(restarted.state.queryFailed)
+        assertEquals(retained.snapshot, restarted.state.snapshot); assertEquals(retained.loadedAt, restarted.state.loadedAt)
+        assertEquals(retained, h.cache.value); assertFalse(restarted.state.devicesActionable)
+        restarted.controller.requestOffline(demoDevice.sessionId); restarted.controller.confirmOffline(); runCurrent()
+        assertEquals(0, reconnect.tips); assertEquals(0, reconnect.offlines)
+    }
+
+    @Test fun queuedHistoricalRestoresAndSavesSurviveDisconnectReconnectAndWifiReplacement() = runTest {
+        for (change in listOf("disconnect", "reconnect", "replace")) {
+            val restoreIo = QueuedIo(); val restoreCache = Cache().apply { value = cached() }
+            val restoring = Harness(backgroundScope, restoreCache, restoreIo); val restoreSession = Session()
+            restoring.configure(restoreSession); runCurrent(); assertTrue(restoreIo.pending)
+            when (change) {
+                "disconnect" -> restoring.controller.wifiChanged(null)
+                "reconnect" -> { restoring.controller.wifiChanged(null); restoring.controller.wifiChanged(wifi(restoreSession)) }
+                else -> restoring.controller.wifiChanged(wifi(restoreSession, "replacement-wifi"))
+            }
+            settle(restoreIo)
+            assertEquals("Pending restore: $change", demoSnapshot, restoring.state.snapshot)
+            assertEquals(1234L, restoring.state.loadedAt); assertTrue(restoring.state.snapshotFromCache)
+            assertFalse(restoring.state.devicesActionable); assertEquals(0, restoreSession.refreshes)
+            assertEquals(0, restoreCache.clears)
+
+            val saveIo = QueuedIo(); val saveCache = Cache()
+            val saving = Harness(backgroundScope, saveCache, saveIo); val saveSession = Session()
+            saving.configure(saveSession); settle(saveIo)
+            saving.controller.query(); runCurrent(); assertTrue(saveIo.pending)
+            val loadedAt = saving.state.loadedAt
+            when (change) {
+                "disconnect" -> saving.controller.wifiChanged(null)
+                "reconnect" -> { saving.controller.wifiChanged(null); saving.controller.wifiChanged(wifi(saveSession)) }
+                else -> saving.controller.wifiChanged(wifi(saveSession, "replacement-wifi"))
+            }
+            settle(saveIo)
+            assertEquals("Pending save: $change", demoSnapshot, saveCache.value?.snapshot)
+            assertEquals(loadedAt, saveCache.value?.loadedAt)
+            assertEquals(demoSnapshot, saving.state.snapshot); assertEquals(loadedAt, saving.state.loadedAt)
+            assertFalse(saving.state.devicesActionable); assertEquals(1, saveSession.refreshes)
+            assertEquals(0, saveCache.clears)
+        }
+    }
+
+    @Test fun nonCooperativeRefreshFromThePreviousWifiCannotReplaceRetainedOrNewerResults() = runTest {
+        val h = harness(); val first = Session(); h.configure(first, visible = true); runCurrent()
+        val original = h.cache.value!!
+        val gate = CompletableDeferred<Unit>()
+        val stale = demoSnapshot.copy(metrics = mapOf("账户余额" to BillingMetric("999", "元")))
+        first.response = { withContext(NonCancellable) { gate.await() }; stale }
+        h.controller.query(); runCurrent(); assertEquals(2, first.refreshes)
+        h.controller.wifiChanged(null); runCurrent()
+        assertEquals(original.snapshot, h.state.snapshot); assertEquals(original.loadedAt, h.state.loadedAt)
+        assertEquals(original, h.cache.value); assertFalse(h.state.running); assertFalse(h.state.devicesActionable)
+        val latest = demoSnapshot.copy(metrics = mapOf("账户余额" to BillingMetric("12.5", "元")))
+        val replacement = Session().apply { response = { latest } }
+        h.controller.wifiChanged(wifi(replacement, "replacement-wifi")); h.controller.query(); runCurrent()
+        assertEquals(0, replacement.refreshes)
+        gate.complete(Unit); runCurrent()
+        assertEquals(original.snapshot, h.state.snapshot); assertEquals(original.loadedAt, h.state.loadedAt)
+        assertEquals(original, h.cache.value); assertFalse(h.state.devicesActionable)
+        h.controller.query(); runCurrent()
+        assertEquals(1, replacement.refreshes); assertEquals(latest, h.state.snapshot)
+        assertEquals(latest, h.cache.value?.snapshot); assertTrue(h.state.devicesActionable)
+        assertEquals(2, first.refreshes)
+    }
+
+    @Test fun disconnectKeepsConfirmedAndUnconfirmedLogoutOutcomesAheadOfNetworkHints() = runTest {
+        for (confirmed in listOf(false, true)) {
+            val h = harness(); val session = Session(); h.configure(session)
+            h.controller.query(); runCurrent()
+            val loadedAt = h.state.loadedAt
+            val cleanup = CompletableDeferred<Unit>()
+            if (confirmed) session.response = { withContext(NonCancellable) { cleanup.await() }; demoSnapshot }
+            else session.offlineAction = { withContext(NonCancellable) { cleanup.await() } }
+            h.controller.requestOffline(demoDevice.sessionId); runCurrent()
+            h.controller.confirmOffline(); runCurrent()
+            assertEquals(1, session.offlines)
+            h.controller.wifiChanged(null); runCurrent()
+            val message = h.state.message
+            assertFalse(h.state.queryFailed); assertFalse(h.state.devicesActionable)
+            if (confirmed) {
+                assertTrue(message.contains("已注销")); assertFalse(message.contains("未确认"))
+                assertTrue(h.state.snapshot!!.devices.isEmpty())
+            } else {
+                assertEquals(BillingProblem.OFFLINE.hint, message)
+                assertEquals(demoSnapshot, h.state.snapshot)
+            }
+            assertEquals(loadedAt, h.state.loadedAt); assertNull(h.cache.value)
+            cleanup.complete(Unit); runCurrent()
+            assertEquals(message, h.state.message); assertNull(h.cache.value)
+            assertEquals(1, session.offlines)
         }
     }
 

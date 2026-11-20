@@ -54,28 +54,36 @@ class BillingControllerTest {
         assertEquals(demoSnapshot, state.snapshot); assertEquals(time, state.loadedAt)
     }
 
-    @Test fun actualDisconnectAfterSuspensionClearsPreviousData() = runTest {
+    @Test fun actualDisconnectAfterSuspensionPreservesPreviousDataWithoutAReusableSession() = runTest {
         val first = FakeSession()
         var state = BillingUiState()
         val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
         controller.accountChanged("demo-1"); controller.wifiChanged(wifi(first))
         controller.enterForeground(); controller.query(); runCurrent()
+        val loadedAt = state.loadedAt
         controller.leaveForeground(); controller.wifiObservationPaused()
         controller.enterForeground(); controller.wifiChanged(null); runCurrent()
-        assertNull(state.snapshot); assertNull(state.loadedAt)
+        assertEquals(demoSnapshot, state.snapshot); assertEquals(loadedAt, state.loadedAt)
+        assertFalse(state.devicesActionable); assertTrue(first.closed)
+        controller.requestOffline(demoDevice.sessionId); controller.confirmOffline(); runCurrent()
+        assertNull(state.confirmation); assertEquals(0, first.offlineCalls)
         assertTrue(state.message.contains("未连接 WiFi"))
     }
 
-    @Test fun changedWifiAfterSuspensionClearsPreviousData() = runTest {
+    @Test fun changedWifiAfterSuspensionPreservesPreviousDataAndWaitsForAnExplicitQuery() = runTest {
         val first = FakeSession(); val next = FakeSession()
         var state = BillingUiState()
         val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
         controller.accountChanged("demo-1"); controller.wifiChanged(wifi(first))
         controller.enterForeground(); controller.query(); runCurrent()
+        val loadedAt = state.loadedAt
         controller.leaveForeground(); controller.wifiObservationPaused()
         controller.enterForeground(); controller.wifiChanged(wifi(next, "another-wifi")); runCurrent()
-        assertNull(state.snapshot); assertNull(state.loadedAt)
+        assertEquals(demoSnapshot, state.snapshot); assertEquals(loadedAt, state.loadedAt)
+        assertFalse(state.devicesActionable); assertTrue(first.closed)
         assertEquals(0, next.calls)
+        controller.requestOffline(demoDevice.sessionId); controller.confirmOffline(); runCurrent()
+        assertNull(state.confirmation); assertEquals(0, next.offlineCalls)
     }
 
     @Test fun logoutWaitsForCancelledAuthenticationToReleaseRequests() = runTest {
@@ -195,11 +203,15 @@ class BillingControllerTest {
 
     @Test fun networkSwitchInvalidatesConfirmationAndDoesNotSubmitOffline() = runTest {
         val fake = FakeSession()
-        val controller = BillingController(backgroundScope, { draft(it) }, {}, {}, {})
+        var state = BillingUiState()
+        val controller = BillingController(backgroundScope, { draft(it) }, { state = it }, {}, {})
         controller.accountChanged("demo-1"); controller.wifiChanged(wifi(fake)); controller.enterForeground(); controller.query(); runCurrent()
+        val loadedAt = state.loadedAt
         controller.requestOffline(demoDevice.sessionId); runCurrent()
         controller.wifiChanged(null); controller.confirmOffline(); runCurrent()
         assertEquals(0, fake.offlineCalls)
+        assertEquals(demoSnapshot, state.snapshot); assertEquals(loadedAt, state.loadedAt)
+        assertNull(state.confirmation); assertFalse(state.devicesActionable)
     }
 
     @Test fun confirmedOfflineIsNotReportedAsFailureWhenRefreshCannotReadStorage() = runTest {
