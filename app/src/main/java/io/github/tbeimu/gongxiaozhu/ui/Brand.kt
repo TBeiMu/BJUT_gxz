@@ -251,7 +251,7 @@ private fun Pen.bounce(t: Float) {
 /** The mark at a moment of one of its animations; with null [time] it is at rest. */
 @Composable
 internal fun BrandMark(modifier: Modifier = Modifier, motion: MarkMotion = MarkMotion.BOUNCE, time: Float? = null,
-    ink: Color = gxz.ink, red: Color = gxz.accent) {
+    ink: Color = gxz.ink, red: Color = gxz.brandAccent) {
     Canvas(modifier) {
         val pen = Pen(this, ink, red)
         when {
@@ -269,7 +269,7 @@ internal fun BrandMark(modifier: Modifier = Modifier, motion: MarkMotion = MarkM
  */
 @Composable
 internal fun BrandLoader(modifier: Modifier = Modifier, motion: MarkMotion = MarkMotion.BOUNCE,
-    ink: Color = gxz.ink, red: Color = gxz.accent) {
+    ink: Color = gxz.ink, red: Color = gxz.brandAccent) {
     val loops = motion != MarkMotion.WEEK
     val described = if (loops) modifier.semantics { progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate } else modifier
     if (LocalReducedMotion.current) { BrandMark(described, motion, null, ink, red); return }

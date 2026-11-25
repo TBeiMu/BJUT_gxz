@@ -3,6 +3,7 @@ package io.github.tbeimu.gongxiaozhu
 import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +19,9 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.Lifecycle
 import io.github.tbeimu.gongxiaozhu.data.AccountState
@@ -38,7 +42,7 @@ class MyHomeUiTest {
         schedule = ScheduleUiState(loading = false,
             data = ScheduleData(identity = ScheduleIdentity("fictional-student-2026", name))))
 
-    @Test fun profileShowsNameAndPlainGreetingWithSixCleanEntries() {
+    @Test fun profileShowsNameAndPlainGreetingWithEightCleanEntries() {
         val opened = mutableListOf<MyDestination>()
         compose.setContent { MyPreviewTheme { AppBackdrop(WallpaperState()) {
             MyHomeScreen(bound(), Modifier.fillMaxSize(), nowProvider = { LocalDateTime.of(1970, 1, 1, 13, 0) }, onOpen = opened::add)
@@ -62,12 +66,59 @@ class MyHomeUiTest {
                 compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
             }
         }
-        assertEquals(6, MyHomeDestinations.size)
+        assertEquals(listOf(MyDestination.EXAMS, MyDestination.GRADES, MyDestination.SHUTTLE,
+            MyDestination.SCHEDULE, MyDestination.NETWORK, MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT), MyHomeDestinations)
+        assertAcademicRowGeometry()
+        listOf("SHUTTLE" to "SCHEDULE", "SCHEDULE" to "NETWORK",
+            "NETWORK" to "APPEARANCE", "APPEARANCE" to "UPDATES", "UPDATES" to "ABOUT").forEach { (before, after) ->
+            compose.onNodeWithTag("my_$after").performScrollTo()
+            assertTrue(compose.onNodeWithTag("my_$before").fetchSemanticsNode().boundsInRoot.bottom <=
+                compose.onNodeWithTag("my_$after").fetchSemanticsNode().boundsInRoot.top)
+        }
         compose.onNodeWithTag("my_ACCOUNTS").assertDoesNotExist()
         MyHomeDestinations.forEach { destination ->
             compose.onNodeWithTag("my_${destination.name}").performScrollTo().performClick()
         }
         assertEquals(MyHomeDestinations, opened)
+    }
+
+    private fun assertAcademicRowGeometry() {
+        val left = compose.onNodeWithTag("my_EXAMS").fetchSemanticsNode().boundsInRoot
+        val right = compose.onNodeWithTag("my_GRADES").fetchSemanticsNode().boundsInRoot
+        val row = compose.onNodeWithTag("my_academic_actions").fetchSemanticsNode().boundsInRoot
+        val shuttle = compose.onNodeWithTag("my_SHUTTLE").fetchSemanticsNode().boundsInRoot
+        assertEquals(left.width, right.width, 1f)
+        assertEquals(left.top, right.top, 1f)
+        assertEquals(left.bottom, right.bottom, 1f)
+        assertEquals(row.left, left.left, 1f)
+        assertEquals(row.right, right.right, 1f)
+        assertTrue(right.left - left.right >= with(compose.density) { 12.dp.toPx() } - 1f)
+        assertTrue(left.bottom <= shuttle.top)
+        assertTrue(right.bottom <= shuttle.top)
+        assertTrue(left.height >= with(compose.density) { 48.dp.toPx() })
+    }
+
+    @Test fun academicCardsLeaveTheirGapTransparentToTheBackground() {
+        val background = Color(0xFF1B3145)
+        compose.setContent {
+            val configuration = Configuration(LocalConfiguration.current).apply {
+                uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
+            }
+            CompositionLocalProvider(LocalConfiguration provides configuration) { MyPreviewTheme {
+                Box(Modifier.fillMaxSize().background(background)) {
+                    MyHomeScreen(bound(), Modifier.fillMaxSize(), onOpen = {})
+                }
+            } }
+        }
+        assertAcademicRowGeometry()
+        val left = compose.onNodeWithTag("my_EXAMS").fetchSemanticsNode().boundsInRoot
+        val right = compose.onNodeWithTag("my_GRADES").fetchSemanticsNode().boundsInRoot
+        val home = compose.onNodeWithTag("my_home").fetchSemanticsNode().boundsInRoot
+        val pixels = compose.onNodeWithTag("my_home").captureToImage().toPixelMap()
+        val x = ((left.right + right.left) / 2 - home.left).toInt()
+        val y = (left.center.y - home.top).toInt()
+        assertEquals("The gap must expose the supplied backdrop, with no shared card fill", background.toArgb(), pixels[x, y].toArgb())
+        assertNotEquals(background.toArgb(), pixels[(left.center.x - home.left).toInt(), y].toArgb())
     }
 
     @Test fun longNameAndLargeFontKeepEveryEntryReadableAndClickableOnSmallScreen() {

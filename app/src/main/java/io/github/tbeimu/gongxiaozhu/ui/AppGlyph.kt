@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 
 internal enum class AppGlyph {
     CALENDAR, PERSON, WIFI, IMAGE, DOWNLOAD, INFO, BACK, CHEVRON, WEEKS,
-    REFRESH, TRAFFIC, GAUGE, SHIELD, COIN, DEVICE, CHECK, EXTERNAL, PLUS, WALLET, GRID, BUS
+    REFRESH, TRAFFIC, GAUGE, SHIELD, COIN, DEVICE, CHECK, EXTERNAL, PLUS, WALLET, GRID, BUS, EXAM, GRADES
 }
 
 /** One 24-unit pen for every icon: round caps, round joins, the same weight. */
@@ -64,6 +64,10 @@ internal fun LineGlyph(glyph: AppGlyph, modifier: Modifier = Modifier, tint: Col
                 AppGlyph.BACK -> poly(14.5f, 5f, 7.5f, 12f, 14.5f, 19f)
                 AppGlyph.CHEVRON -> poly(9.5f, 5.5f, 16f, 12f, 9.5f, 18.5f)
                 AppGlyph.CALENDAR -> calendar()
+                AppGlyph.EXAM -> { box(5f, 4f, 14f, 17f, 2.5f); box(9f, 2.5f, 6f, 4f, 1.5f)
+                    poly(8.5f, 11f, 10.5f, 13f, 15.5f, 9f); poly(8.5f, 17f, 15.5f, 17f) }
+                AppGlyph.GRADES -> { box(4f, 3f, 16f, 18f, 2.5f); poly(8f, 8f, 16f, 8f)
+                    poly(8f, 16.5f, 8f, 13.5f); poly(12f, 16.5f, 12f, 11.5f); poly(16f, 16.5f, 16f, 14.5f) }
                 AppGlyph.BUS -> {
                     box(5f, 3f, 14f, 16f, 3f); poly(5f, 11f, 19f, 11f)
                     poly(9f, 3f, 9f, 11f); poly(15f, 3f, 15f, 11f)

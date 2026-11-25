@@ -102,7 +102,7 @@ class MyNavigationTest {
         compose.onNodeWithContentDescription("打开 App 自动登录").assertDoesNotExist()
         compose.onNodeWithTag("my_ACCOUNTS").assertDoesNotExist()
         compose.onAllNodesWithText("校园网", substring = false).assertCountEquals(1)
-        listOf("SHUTTLE","SCHEDULE","NETWORK","APPEARANCE","ABOUT").forEach { key ->
+        listOf("EXAMS","GRADES","SHUTTLE","SCHEDULE","NETWORK","APPEARANCE","ABOUT").forEach { key ->
             compose.onNodeWithTag("my_$key").performScrollTo().performClick()
             compose.onNodeWithText("资费",substring=false).assertExists()
             compose.onNodeWithContentDescription("返回").performClick()
@@ -114,6 +114,24 @@ class MyNavigationTest {
         compose.onNodeWithText("我的",substring=false).performClick()
         compose.onNodeWithTag("my_UPDATES").assertExists()
         compose.onNodeWithTag("my_profile_greeting").assertExists()
+    }
+    @Test fun academicPagesWorkWithoutAccountsAndRestoreBothBackPaths() {
+        compose.onNodeWithText("我的", substring = false).performClick()
+        listOf("EXAMS" to "academic_exams", "GRADES" to "academic_grades").forEach { (key, content) ->
+            compose.onNodeWithTag("my_$key").performScrollTo().performClick()
+            compose.onNodeWithTag(content).assertExists()
+            compose.onNodeWithText("资费", substring = false).assertIsDisplayed()
+            compose.onNodeWithText("课表", substring = false).assertIsDisplayed()
+            compose.onNodeWithTag("my_github").assertDoesNotExist()
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag(content).assertExists()
+            compose.onNodeWithContentDescription("返回").performClick()
+            compose.onNodeWithTag("my_$key").assertIsDisplayed().performClick()
+            compose.onNodeWithTag(content).assertExists()
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.onNodeWithTag("my_$key").assertIsDisplayed()
+            compose.onNodeWithTag("my_github").assertIsDisplayed()
+        }
     }
     @Test fun shuttleWorksWithoutAccountsAndRestoresBothBackPaths(){
         compose.onNodeWithText("我的",substring=false).performClick()

@@ -11,15 +11,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsControllerCompat
+import android.app.Activity
+import android.content.ContextWrapper
 
 /**
- * 墨与朱：界面本身只用墨色和磨砂白，颜色交给背景与课程；朱红只标记“今天”和需要被看见的一点。
- * 这些颜色不随背景预设变化，保证六种渐变、壁纸取色和自选图片上都清晰。
+ * 墨色、背景与课程色保持中性；用户可选强调色只映射到今日、此刻和其他现有标记。
+ * 品牌朱红及操作色固定，避免外观选择改变 Logo、按钮语义或课程颜色。
  */
 @Immutable
 internal data class GxzPalette(
@@ -35,18 +40,19 @@ internal data class GxzPalette(
     val well: Color,
     val accent: Color,
     val onAccent: Color,
+    val brandAccent: Color,
     val positive: Color,
 )
 
 private val LightPalette = GxzPalette(
     dark = false,
-    // Neutral ink on paper. Cards are solid white; a hairline and a soft shadow separate them.
+    // Neutral ink on paper. Glass opacity is user-adjustable within a narrow readable range.
     ink = Color(0xFF1B1D22), onInk = Color.White,
     inkSoft = Color(0xFF585D67), inkFaint = Color(0xFF8D919A),
     hairline = Color(0xFF1B1D22).copy(alpha = .07f),
     glass = Color.White.copy(alpha = .96f), glassStrong = Color.White,
     glassEdge = Color(0xFF1B1D22).copy(alpha = .05f), well = Color(0xFF1B1D22).copy(alpha = .045f),
-    accent = Color(0xFFE5482E), onAccent = Color.White, positive = Color(0xFF1C9A68),
+    accent = Color(0xFFE5482E), onAccent = Color.White, brandAccent = Color(0xFFE5482E), positive = Color(0xFF1C9A68),
 )
 
 private val DarkPalette = GxzPalette(
@@ -56,7 +62,7 @@ private val DarkPalette = GxzPalette(
     hairline = Color.White.copy(alpha = .08f),
     glass = Color(0xFF1C1E23).copy(alpha = .96f), glassStrong = Color(0xFF23262B),
     glassEdge = Color.White.copy(alpha = .06f), well = Color.White.copy(alpha = .07f),
-    accent = Color(0xFFFF6E52), onAccent = Color(0xFF2B0700), positive = Color(0xFF52CC9E),
+    accent = Color(0xFFFF6E52), onAccent = Color(0xFF2B0700), brandAccent = Color(0xFFFF6E52), positive = Color(0xFF52CC9E),
 )
 
 internal val LocalGxzPalette = staticCompositionLocalOf { LightPalette }
@@ -139,10 +145,48 @@ private val Shape = Shapes(
 )
 
 @Composable
-fun GongXiaoZhuTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    CompositionLocalProvider(LocalGxzPalette provides if (dark) DarkPalette else LightPalette,
+fun GongXiaoZhuTheme(content: @Composable () -> Unit) = GongXiaoZhuTheme(WallpaperPreferences(), content)
+
+@Composable
+internal fun GongXiaoZhuTheme(appearance: WallpaperPreferences, content: @Composable () -> Unit) {
+    val systemDark = isSystemInDarkTheme()
+    val palette = appearancePalette(appearance, systemDark)
+    val dark = palette.dark
+    val view = LocalView.current
+    SideEffect {
+        var context = view.context
+        var activity: Activity? = null
+        while (context is ContextWrapper) {
+            if (context is Activity) { activity = context; break }
+            context = context.baseContext
+        }
+        if (context is Activity) activity = context
+        val window = activity?.window
+        if (window != null) {
+            WindowInsetsControllerCompat(window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
+    CompositionLocalProvider(LocalGxzPalette provides palette,
         LocalReducedMotion provides rememberReducedMotion()) {
         MaterialTheme(colorScheme = if (dark) Dark else Light, typography = Type, shapes = Shape, content = content)
     }
+}
+
+/** The same palette for the app and its miniature previews; no window or save side effects. */
+internal fun appearancePalette(appearance: WallpaperPreferences, systemDark: Boolean): GxzPalette {
+    val dark = appearance.themeMode.isDark(systemDark)
+    val base = if (dark) DarkPalette else LightPalette
+    val (accent, onAccent) = accentColors(appearance.accentPreset, dark)
+    return base.copy(accent = accent, onAccent = onAccent,
+        glass = base.glass.copy(alpha = appearance.cardOpacityPercent / 100f))
+}
+
+internal fun accentColors(preset: AccentPreset, dark: Boolean): Pair<Color, Color> = when (preset) {
+    AccentPreset.VERMILION -> if (dark) Color(0xFFFF6E52) to Color(0xFF2B0700) else Color(0xFFE5482E) to Color.White
+    AccentPreset.BLUE -> if (dark) Color(0xFF83B8FF) to Color(0xFF09213D) else Color(0xFF276BC0) to Color.White
+    AccentPreset.GREEN -> if (dark) Color(0xFF72D0AB) to Color(0xFF0B2B20) else Color(0xFF207B58) to Color.White
+    AccentPreset.VIOLET -> if (dark) Color(0xFFB8A2FF) to Color(0xFF211342) else Color(0xFF7050B5) to Color.White
 }

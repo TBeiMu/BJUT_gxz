@@ -25,6 +25,9 @@ class CampusLoginRuntime private constructor(context: Context) {
     val accounts = createAccountRepository(context)
     val billingCache = io.github.tbeimu.gongxiaozhu.billing.createBillingCacheRepository(context)
     val scheduleImport = io.github.tbeimu.gongxiaozhu.schedule.ScheduleImportRuntime.get(context)
+    val academic = io.github.tbeimu.gongxiaozhu.academic.AcademicController(scope,
+        io.github.tbeimu.gongxiaozhu.academic.createAcademicRepository(context),
+        io.github.tbeimu.gongxiaozhu.academic.academicNetworks(context))
     val connectionNotice = CampusConnectionNotice(scope)
     private val blocked = MutableStateFlow(false)
     val storageBlocked = blocked.asStateFlow()
@@ -55,6 +58,7 @@ class CampusLoginRuntime private constructor(context: Context) {
 
     fun enterForeground() {
         foreground = true
+        academic.enterForeground()
         if (monitoring == null) {
             controller.awaitWifiSnapshot()
             monitoring = scope.launch {
@@ -73,6 +77,7 @@ class CampusLoginRuntime private constructor(context: Context) {
 
     fun leaveForeground() {
         foreground = false
+        academic.leaveForeground()
         accountNames.leaveForeground()
         connectionNotice.setVisible(false)
         controller.leaveForeground()

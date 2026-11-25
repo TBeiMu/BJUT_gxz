@@ -99,7 +99,9 @@ internal enum class Tab(val title: String) {
 
 @Composable
 fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRequest: Int = 0,
-    openScheduleRequest: Int = 0) = GongXiaoZhuTheme {
+    openScheduleRequest: Int = 0) {
+    val wallpaper = rememberWallpaper()
+    GongXiaoZhuTheme(wallpaper.preferences) {
     val state by model.state.collectAsStateWithLifecycle()
     val updateActions = rememberUpdateActions()
     val updates by updateActions.repository.state.collectAsStateWithLifecycle()
@@ -117,7 +119,6 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
           catch (_: SecurityException) { false }
         if (!opened) scope.launch { snackbar.showSnackbar("暂时无法打开 GitHub 项目主页") }
     }
-    val wallpaper = rememberWallpaper()
     var destination by rememberSaveable { mutableStateOf<MyDestination?>(null) }
     var returnTab by rememberSaveable { mutableStateOf(Tab.MY) }
     var networkSection by rememberSaveable { mutableStateOf(CampusNetworkSection.CONNECTION) }
@@ -144,7 +145,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var resetting by remember { mutableStateOf(false) }
     val updateUnobstructed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && !localDialogVisible &&
         state.schedule.page == null && state.editor == null && state.courseEditor == null && !resetSchedule && !resetting && deleting == null &&
-        state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null
+        state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null && state.academic.login == null
     val updateDialogVisible = updateUnobstructed && (updates.prompt != null || updates.mobileConfirmation != null)
     LaunchedEffect(openUpdatesRequest) {
         if (openUpdatesRequest > 0) open(MyDestination.UPDATES, Tab.MY)
@@ -167,6 +168,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     val snackbarUnobstructed = updateUnobstructed && !updateDialogVisible
     UpdateCheckFeedback(updateActions.repository, snackbar, snackbarUnobstructed, updateActions.releasePage)
     CourseUndoFeedback(model, state.schedule.courseUndo.takeUnless { state.courseSaving }, snackbar, snackbarUnobstructed)
+    AcademicUndoFeedback(model.academicController, state.academic.undo.takeUnless { state.academic.saving }, snackbar, snackbarUnobstructed)
     val nameFeedbackVisible = snackbarUnobstructed && !state.busy &&
         !state.loading && !state.storageBlocked
     LaunchedEffect(model, nameFeedbackVisible) {
@@ -194,7 +196,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
                         titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
                             !resetting && deleting == null && state.billing.webPage == null && !state.billing.offerWeb &&
-                            state.billing.confirmation == null && state.courseEditor == null && !updateDialogVisible,
+                            state.billing.confirmation == null && state.courseEditor == null && state.academic.login == null && !updateDialogVisible,
                         onCancelImport = model.scheduleController::cancelImport,
                         onDialogVisibilityChanged = { localDialogVisible = it },
                         onAddCourse = { week, day -> model.editCourse(week = week, weekday = day) },
@@ -240,6 +242,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
         model.scheduleController::submit, model.scheduleController::resource,
         { model.scheduleController.pause() }, model.scheduleController::unsupportedWebView) }
 
+    AcademicLoginDialog(state.academic, model.academicController)
     state.editor?.let { draft ->
         AccountEditor(draft, state.editorDraft ?: draft, state.busy, state.editorError, state.discardAccountChanges,
             onChange = model::updateAccountDraft, onDismiss = model::requestCloseEditor,
@@ -282,6 +285,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
             text = { Text("所有保存的账号、密码和设置将被清除。此操作无法撤销，之后需要重新录入。") },
             confirmButton = { TextButton(onClick = { resetting = false; model.resetStorage() }, enabled = !state.busy) { Text("清除并重新录入") } },
             dismissButton = { TextButton(onClick = { resetting = false }) { Text("取消") } })
+    }
     }
 }
 

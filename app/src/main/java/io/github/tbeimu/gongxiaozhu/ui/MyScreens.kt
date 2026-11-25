@@ -29,6 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.tbeimu.gongxiaozhu.BuildConfig
@@ -39,6 +40,7 @@ import java.text.DateFormat
 import java.util.Date
 
 internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
+    EXAMS("考试管理", AppGlyph.EXAM), GRADES("成绩管理", AppGlyph.GRADES),
     SHUTTLE("校车时刻表", AppGlyph.BUS),
     SCHEDULE("课表管理", AppGlyph.CALENDAR),
     // Retained only so an older saved destination can restore into the merged page.
@@ -47,8 +49,10 @@ internal enum class MyDestination(val title: String, val glyph: AppGlyph) {
     UPDATES("检查更新", AppGlyph.DOWNLOAD), ABOUT("关于工小助", AppGlyph.INFO)
 }
 
-internal val MyHomeDestinations = listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.NETWORK,
+private val MyServiceDestinations = listOf(MyDestination.SHUTTLE, MyDestination.SCHEDULE, MyDestination.NETWORK)
+private val MyAppDestinations = listOf(
     MyDestination.APPEARANCE, MyDestination.UPDATES, MyDestination.ABOUT)
+internal val MyHomeDestinations = listOf(MyDestination.EXAMS, MyDestination.GRADES) + MyServiceDestinations + MyAppDestinations
 
 internal val MyDestination.canonical: MyDestination get() = if (this == MyDestination.ACCOUNTS) MyDestination.NETWORK else this
 
@@ -70,10 +74,11 @@ internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates
                 Text(myGreeting(moment), Modifier.entrance(Motion.STAGGER, distance = 10.dp).testTag("my_profile_greeting"),
                     style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
             }
-            MyGroup(MyHomeDestinations.take(3),
-                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 2)
-            MyGroup(MyHomeDestinations.drop(3),
-                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 5)
+            MyAcademicActions(onOpen)
+            MyGroup(MyServiceDestinations,
+                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 3)
+            MyGroup(MyAppDestinations,
+                checkingUpdates, onOpen, firstDelay = Motion.STAGGER * 6)
         }
         Row(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onOpenProject)
@@ -83,6 +88,30 @@ internal fun MyHomeScreen(state: AppUiState, modifier: Modifier, checkingUpdates
             Icon(painterResource(R.drawable.ic_github), contentDescription = null,
                 modifier = Modifier.size(20.dp).testTag("my_github_icon"), tint = palette.inkSoft)
             Text("github", Modifier.testTag("my_github_label"), style = MaterialTheme.typography.bodyMedium, color = palette.inkSoft)
+        }
+    }
+}
+
+@Composable
+private fun MyAcademicActions(onOpen: (MyDestination) -> Unit) {
+    val palette = gxz
+    // One shared entrance keeps the pair aligned; the gap always exposes the page background.
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)
+        .entrance(Motion.STAGGER * 2, distance = 16.dp, fromScale = .98f).testTag("my_academic_actions"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        listOf(MyDestination.EXAMS, MyDestination.GRADES).forEach { entry ->
+            val interaction = remember { MutableInteractionSource() }
+            Column(Modifier.weight(1f).fillMaxHeight().heightIn(min = 104.dp)
+                .pressScale(interaction, .975f).glass(palette)
+                .clickable(interaction, LocalIndication.current, role = Role.Button) { onOpen(entry) }
+                .testTag("my_${entry.name}")
+                .padding(horizontal = 12.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically)) {
+                LineGlyph(entry.glyph, Modifier.size(26.dp), palette.ink)
+                Text(entry.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyLarge,
+                    color = palette.ink, textAlign = TextAlign.Center)
+            }
         }
     }
 }
@@ -141,10 +170,14 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
             CampusNetworkContent(state, Modifier.weight(1f), networkSection, networkEntryRequest,
                 model::addAccount, model::editAccount, model::setDefault, onDelete,
                 model::login, model::cancelLogin, model::updateSettings, model::reload, onResetAccounts)
+        } else if (page == MyDestination.EXAMS || page == MyDestination.GRADES) {
+            AcademicContent(page == MyDestination.GRADES, state.academic, model.academicController,
+                Modifier.weight(1f), onDialogVisibilityChanged)
         } else Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             when (page) {
+                MyDestination.EXAMS, MyDestination.GRADES -> Unit // Independent lazy lists above.
                 MyDestination.SHUTTLE -> ShuttleTimetableContent()
                 MyDestination.SCHEDULE -> {
                     val schedule = state.schedule

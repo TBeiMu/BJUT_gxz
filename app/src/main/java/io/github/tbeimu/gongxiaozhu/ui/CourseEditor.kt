@@ -459,7 +459,7 @@ internal fun ScheduleAddButton(expanded: Boolean, enabled: Boolean, onExpand: (B
                 enabled = enabled, leadingIcon = { LineGlyph(AppGlyph.DOWNLOAD, Modifier.size(20.dp)) }, modifier = Modifier.testTag("import_graduate"))
             HorizontalDivider(Modifier.padding(horizontal = 12.dp))
             DropdownMenuItem(text = { Text("添加自定义课程") }, onClick = { onExpand(false); onAdd() }, enabled = enabled,
-                leadingIcon = { LineGlyph(AppGlyph.PLUS, Modifier.size(20.dp), gxz.accent) }, modifier = Modifier.testTag("add_custom_course"))
+                leadingIcon = { LineGlyph(AppGlyph.PLUS, Modifier.size(20.dp), gxz.brandAccent) }, modifier = Modifier.testTag("add_custom_course"))
         }
     }
 }

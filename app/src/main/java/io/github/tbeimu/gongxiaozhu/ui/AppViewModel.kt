@@ -41,6 +41,7 @@ data class AppUiState(
     val login: LoginUiState = LoginUiState(),
     val billing: BillingUiState = BillingUiState(),
     val schedule: ScheduleUiState = ScheduleUiState(),
+    val academic: io.github.tbeimu.gongxiaozhu.academic.AcademicUiState = io.github.tbeimu.gongxiaozhu.academic.AcademicUiState(),
     val courseEditor: CourseEditContext? = null,
     val courseSaving: Boolean = false,
     val courseError: String? = null,
@@ -58,6 +59,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
     val nameWriteFailure = runtime.accountNames.writeFailure
     fun consumeNameWriteFailure() = runtime.accountNames.consumeWriteFailure()
     val scheduleController = runtime.scheduleImport.controller
+    val academicController = runtime.academic
     private val courseUndoTimer = CourseUndoTimer()
 
     fun editCourse(course: ScheduleCourse? = null, week: Int = 1, weekday: Int = java.time.LocalDate.now(
@@ -121,6 +123,7 @@ class AppViewModel(private val runtime: CampusLoginRuntime) : ViewModel() {
         awaitLoginStopped = loginController::awaitStopped, cache = runtime.billingCache)
 
     init {
+        viewModelScope.launch { academicController.state.collect { academic -> mutable.update { it.copy(academic = academic) } } }
         loginController.awaitAccountReadiness()
         reload()
         viewModelScope.launch { repository.state.collect { data ->

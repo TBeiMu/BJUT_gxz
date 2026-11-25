@@ -13,7 +13,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -60,8 +59,13 @@ internal class WallpaperState {
     var clear: () -> Unit = {}
     var selectMode: (WallpaperMode) -> Unit = {}
     var selectPreset: (WallpaperPreset) -> Unit = {}
+    var selectThemeMode: (AppThemeMode) -> Unit = {}
+    var selectAccentPreset: (AccentPreset) -> Unit = {}
     var previewBlur: (Float) -> Unit = {}
     var saveBlur: () -> Unit = {}
+    var previewCardOpacity: (Float) -> Unit = {}
+    var saveCardOpacity: () -> Unit = {}
+    var applyAppearance: (AppThemeMode, AccentPreset, Int) -> Unit = { _, _, _ -> }
 
     fun acceptSystemColors(colors: List<Color>?) {
         if (!colors.isNullOrEmpty()) { systemColors = colors.take(3); systemColorsUnavailable = false }
@@ -89,7 +93,7 @@ internal fun rememberWallpaper(): WallpaperState {
                 withContext(Dispatchers.IO) { store.save(next) }
                 if (token == operation) { saved = next; state.preferences = next; state.message = null }
             } catch (error: CancellationException) { throw error }
-            catch (_: Exception) { if (token == operation) { state.preferences = saved; state.message = "背景设置保存失败，已保留原设置" } }
+            catch (_: Exception) { if (token == operation) { state.preferences = saved; state.message = "个性化设置保存失败，已保留原设置" } }
             finally { if (token == operation) state.busy = false }
         }
     }
@@ -128,8 +132,15 @@ internal fun rememberWallpaper(): WallpaperState {
         else commit(saved.copy(mode = mode))
     }
     state.selectPreset = { commit(saved.copy(mode = WallpaperMode.PRESET, preset = it)) }
+    state.selectThemeMode = { commit(saved.copy(themeMode = it)) }
+    state.selectAccentPreset = { commit(saved.copy(accentPreset = it)) }
     state.previewBlur = { if (!state.busy) state.preferences = state.preferences.copy(photoBlurDp = it.roundToInt().coerceIn(0, 24)) }
     state.saveBlur = { commit(state.preferences) }
+    state.previewCardOpacity = { if (!state.busy) state.preferences = state.preferences.copy(
+        cardOpacityPercent = it.roundToInt().coerceIn(84, 98)) }
+    state.saveCardOpacity = { commit(state.preferences) }
+    state.applyAppearance = { mode, accent, opacity -> commit(saved.copy(
+        themeMode = mode, accentPreset = accent, cardOpacityPercent = opacity.coerceIn(84, 98))) }
 
     LaunchedEffect(store) {
         val token = ++operation
@@ -226,7 +237,7 @@ internal fun wallpaperPresetSwatch(preset: WallpaperPreset): List<Color> = when 
 
 @Composable
 internal fun WallpaperBackground(wallpaper: WallpaperState, modifier: Modifier = Modifier) {
-    val dark = isSystemInDarkTheme()
+    val dark = gxz.dark
     val preferences = wallpaper.preferences
     val targetColors = if (preferences.mode == WallpaperMode.SYSTEM_COLORS && !wallpaper.systemColors.isNullOrEmpty()) {
         val source = wallpaper.systemColors!!
@@ -237,7 +248,9 @@ internal fun WallpaperBackground(wallpaper: WallpaperState, modifier: Modifier =
     val radius = with(LocalDensity.current) { preferences.photoBlurDp.dp.toPx() }
     // A new background washes over the old one instead of switching: the whole app changes light together.
     val wash = tween<Color>(900, easing = Motion.Emphasized)
-    val colors = targetColors.mapIndexed { index, color -> animateColorAsState(color, wash, label = "背景色$index").value }
+    val colors = if (LocalReducedMotion.current) targetColors else targetColors.mapIndexed { index, color ->
+        animateColorAsState(color, wash, label = "背景色$index").value
+    }
     Box(modifier.background(Brush.verticalGradient(colors))) {
         val photo = wallpaper.image.takeIf { preferences.mode == WallpaperMode.PHOTO }
         if (photo != null) {

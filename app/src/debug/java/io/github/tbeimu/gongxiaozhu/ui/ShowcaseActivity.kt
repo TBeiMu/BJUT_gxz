@@ -78,14 +78,14 @@ class ShowcaseActivity : ComponentActivity() {
             return
         }
         setContent {
-            GongXiaoZhuTheme { ShowcaseFont {
+            val wallpaper = rememberWallpaper()
+            GongXiaoZhuTheme(wallpaper.preferences) { ShowcaseFont {
                 var tab by rememberSaveable { mutableStateOf(if (firstPage != null) Tab.MY else firstTab) }
                 var destination by rememberSaveable { mutableStateOf(firstPage?.canonical) }
                 var networkSection by rememberSaveable { mutableStateOf(if (firstPage == MyDestination.ACCOUNTS)
                     CampusNetworkSection.ACCOUNTS else CampusNetworkSection.CONNECTION) }
                 var networkEntryRequest by rememberSaveable { mutableStateOf(0L) }
                 val snackbar = remember { SnackbarHostState() }
-                val wallpaper = rememberWallpaper()
                 val updateActions = rememberUpdateActions()
                 BackHandler(enabled = destination != null) { destination = null }
                 // 刷新资费 pretends to ask the school: shimmer for a moment, then the figures roll to new values.
