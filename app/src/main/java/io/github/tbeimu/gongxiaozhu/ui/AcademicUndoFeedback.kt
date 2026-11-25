@@ -15,7 +15,21 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+
+/** Consume before showing: rotation cannot replay an already presented query result. */
+@Composable
+internal fun AcademicQueryFeedback(controller: AcademicController, snackbar: SnackbarHostState, unobstructed: Boolean) {
+    LaunchedEffect(controller, snackbar, unobstructed) {
+        if (!unobstructed) return@LaunchedEffect
+        controller.state.map { it.message }.filterNotNull().collect { message ->
+            controller.clearMessage()
+            snackbar.showSnackbar(message)
+        }
+    }
+}
 
 /** The controller owns the deadline, so rotation and a covered host cannot renew undo. */
 @Composable

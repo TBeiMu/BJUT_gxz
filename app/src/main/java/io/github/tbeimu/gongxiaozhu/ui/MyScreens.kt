@@ -158,7 +158,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
     networkEntryRequest: Long = 0L) {
     val palette = gxz
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 8.dp, end = 16.dp),
+        if (page != MyDestination.EXAMS && page != MyDestination.GRADES) Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 8.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             RoundIconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = "返回" }) {
                 LineGlyph(AppGlyph.BACK, Modifier.size(20.dp))
@@ -172,7 +172,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
                 model::login, model::cancelLogin, model::updateSettings, model::reload, onResetAccounts)
         } else if (page == MyDestination.EXAMS || page == MyDestination.GRADES) {
             AcademicContent(page == MyDestination.GRADES, state.academic, model.academicController,
-                Modifier.weight(1f), onDialogVisibilityChanged)
+                Modifier.weight(1f), onDialogVisibilityChanged, onBack)
         } else Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {

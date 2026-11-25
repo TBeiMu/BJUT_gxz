@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -56,6 +57,11 @@ class AcademicUiTest {
     private fun record(id: String, start: String = "", end: String = "") =
         ExamRecord(id, fields = ExamFields("示例考试$id", start, end))
 
+    private fun openExam(id: String) {
+        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_$id"))
+        compose.onNodeWithTag("exam_$id").performClick()
+    }
+
     @Test fun offlineAllowsManualExamAndSavesNormalizedFieldsWithRevision() {
         var saved: Triple<String?, ExamFields, Long>? = null
         var editStarts = 0
@@ -64,7 +70,8 @@ class AcademicUiTest {
             AcademicActions(beginEdit = { editStarts++ }, saveExam = { id, fields, revision -> saved = Triple(id, fields, revision) }),
             Modifier.fillMaxSize(), now) } }
         compose.onNodeWithTag("academic_refresh").assertIsNotEnabled()
-        compose.onNodeWithTag("academic_add_exam").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_add_exam").assertIsEnabled().performClick()
         compose.onNodeWithTag("save_exam").assertIsNotEnabled()
         compose.onNodeWithTag("exam_name").performTextInput("  示例手动考试  ")
         compose.onNodeWithTag("save_exam").performClick()
@@ -89,7 +96,8 @@ class AcademicUiTest {
         compose.onNodeWithTag("exam_filter_UNSET").performClick()
         compose.onNodeWithTag("exam_unset").assertExists()
         compose.onNodeWithTag("exam_past").assertDoesNotExist()
-        compose.onAllNodesWithText("时间未定").assertCountEquals(2)
+        openExam("unset")
+        compose.onAllNodes(hasText("时间未定") and hasAnyAncestor(hasTestTag("academic_exam_details"))).assertCountEquals(2)
     }
 
     @Test fun startedExamsWithUnknownEndStayUndeterminedInsteadOfBeingMarkedFinished() {
@@ -100,11 +108,11 @@ class AcademicUiTest {
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, data = AcademicData(exams = exams)), AcademicActions(), Modifier.fillMaxSize(), now) } }
         compose.onNodeWithTag("exam_filter_FINISHED").performScrollTo().performClick()
-        compose.onNodeWithText("当前筛选下暂无考试。").assertExists()
+        compose.onNodeWithText("暂无匹配的考试").assertExists()
         compose.onNodeWithTag("exam_unknown-blank").assertDoesNotExist()
         compose.onNodeWithTag("exam_unknown-school").assertDoesNotExist()
         compose.onNodeWithTag("exam_filter_UPCOMING").performClick()
-        compose.onNodeWithText("当前筛选下暂无考试。").assertExists()
+        compose.onNodeWithText("暂无匹配的考试").assertExists()
         compose.onNodeWithTag("exam_filter_UNSET").performClick()
         compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_unknown-blank"))
         compose.onNodeWithTag("exam_unknown-blank").assertExists()
@@ -123,7 +131,8 @@ class AcademicUiTest {
         compose.onNodeWithTag("exam_filter_UPCOMING").assertIsSelected()
         compose.onNodeWithTag("exam_next").assertExists()
         compose.onNodeWithTag("exam_past").assertDoesNotExist()
-        compose.onNodeWithTag("academic_add_exam").performScrollTo().performClick()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_add_exam").performClick()
         compose.onNodeWithTag("exam_name").performTextInput("旋转后保留的考试草稿")
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("exam_name").assertTextContains("旋转后保留的考试草稿")
@@ -142,7 +151,8 @@ class AcademicUiTest {
                 Modifier.fillMaxSize(), now, onDialogVisibilityChanged = { dialogVisible = it })
         } }
         compose.runOnIdle { assertFalse(dialogVisible) }
-        compose.onNodeWithTag("academic_add_exam").performScrollTo().performClick()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_add_exam").performClick()
         compose.runOnIdle { assertTrue(dialogVisible) }
         compose.onNodeWithTag("exam_name").performTextInput("待保存的示例考试")
         compose.onNodeWithTag("cancel_exam").performClick()
@@ -162,7 +172,7 @@ class AcademicUiTest {
             AcademicContentBody(false, AcademicUiState(loading = loading, data = if (loading) AcademicData() else savedData),
                 AcademicActions(), Modifier.fillMaxSize(), now)
         } }
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("edit_exam_restored"))
+        openExam("restored")
         compose.onNodeWithTag("edit_exam_restored").performClick()
         compose.onNodeWithTag("exam_name").performTextReplacement("尚未保存的原考试修改")
         // A new process restores the page and draft before its encrypted vault finishes loading.
@@ -180,7 +190,8 @@ class AcademicUiTest {
         restoration.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, editCompleted = if (newProcess) completionAfterRestore else 7L),
             AcademicActions(), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("academic_add_exam").performScrollTo().performClick()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_add_exam").performClick()
         compose.onNodeWithTag("exam_name").performTextInput("跨进程保留的考试草稿")
         compose.onNodeWithTag("exam_location").performScrollTo().performTextInput("示例楼 301")
         newProcess = true
@@ -192,17 +203,16 @@ class AcademicUiTest {
         compose.onNodeWithTag("exam_editor").assertDoesNotExist()
     }
 
-    @Test fun failedLocalDeleteShowsItsResultAndKeepsTheOriginalExamVisible() {
+    @Test fun failedLocalDeleteKeepsTheOriginalExamAndPendingFeedback() {
         val exam = record("write-failure")
         val failure = "保存未完成，原教务资料保留，请重试"
         var ui by mutableStateOf(AcademicUiState(loading = false, data = AcademicData(exams = listOf(exam))))
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false, ui,
             AcademicActions(deleteExam = { _, _ -> ui = ui.copy(message = failure) }), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("delete_exam_write-failure"))
+        openExam("write-failure")
         compose.onNodeWithTag("delete_exam_write-failure").performClick()
         compose.onNodeWithTag("academic_confirm").performClick()
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("academic_message"))
-        compose.onNodeWithTag("academic_message").assertTextEquals(failure)
+        compose.runOnIdle { assertEquals(failure, ui.message) }
         compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_write-failure"))
         compose.onNodeWithTag("exam_write-failure").assertExists()
     }
@@ -216,7 +226,7 @@ class AcademicUiTest {
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false, ui, AcademicActions(
             deleteExam = { id, revision -> deleted = id to revision }, restoreExam = { id, revision -> restored = id to revision }),
             Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("delete_exam_school"))
+        openExam("school")
         compose.onNodeWithTag("delete_exam_school").performClick()
         assertNull(deleted)
         compose.onNodeWithText("仅在本机隐藏", substring = true).assertExists()
@@ -225,7 +235,7 @@ class AcademicUiTest {
         compose.runOnIdle { ui = ui.copy(data = ui.data.copy(exams = listOf(exam.copy(hidden = true)))) }
         compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("academic_hidden_toggle"))
         compose.onNodeWithTag("academic_hidden_toggle").performClick()
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("restore_exam_school"))
+        openExam("school")
         compose.onNodeWithTag("restore_exam_school").performClick()
         compose.onNodeWithText("恢复上次导入内容？").assertExists()
         compose.onNodeWithTag("academic_confirm").performClick()
@@ -240,11 +250,14 @@ class AcademicUiTest {
             AcademicUiState(loading = false, data = AcademicData(grades = grades)), AcademicActions(), Modifier.fillMaxSize(), now) } }
         compose.onNodeWithTag("academic_grades").performScrollToNode(hasTestTag("grade_0_0"))
         compose.onNodeWithText("暂未发布").assertExists()
+        compose.onNodeWithTag("grade_0_0").performClick()
         compose.onNodeWithText("成绩受限 · 以学校显示为准").assertExists()
-        compose.onNode(hasText("未获取") and hasAnyAncestor(hasTestTag("grade_0_0"))).assertExists()
+        compose.onNode(hasText("未获取") and hasAnyAncestor(hasTestTag("academic_grade_details"))).assertExists()
+        compose.onNodeWithTag("academic_close_details").performClick()
         compose.onNodeWithText("平均分").assertDoesNotExist()
         compose.onNodeWithText("绩点").assertDoesNotExist()
-        compose.onNodeWithTag("academic_grades").performScrollToNode(hasTestTag("grade_term_0"))
+        compose.onNodeWithTag("academic_grades").performScrollToNode(hasTestTag("grade_term_filter"))
+        compose.onNodeWithTag("grade_term_filter").performClick()
         compose.onNodeWithTag("grade_term_0").performClick()
         compose.onNodeWithTag("academic_grades").performScrollToNode(hasText("暂无选修课成绩"))
         compose.onNodeWithText("示例选修课程").assertDoesNotExist()
@@ -363,12 +376,161 @@ class AcademicUiTest {
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, data = AcademicData(exams = listOf(exam), revision = 17)),
             AcademicActions(deleteExam = { id, revision -> deleted = id to revision }), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("delete_exam_retained"))
+        openExam("retained")
         compose.onNodeWithTag("delete_exam_retained").assertTextEquals("删除").performClick()
         compose.onNodeWithText("仅删除本地保留副本，当前学校安排不受影响。").assertExists()
         assertNull(deleted)
         compose.onNodeWithTag("academic_confirm").assertTextEquals("删除考试").performClick()
         assertEquals("retained" to 17L, deleted)
+    }
+
+    @Test fun addMenusDistinguishGraduateAndUnavailableUndergraduateAndNeverOfferManualGrades() {
+        var grades by mutableStateOf(false)
+        val requests = mutableListOf<AcademicRequest>()
+        compose.setContent { AcademicPreviewTheme {
+            key(grades) { AcademicContentBody(grades, previewState(), AcademicActions(start = { target, intent ->
+                requests += AcademicRequest(target, intent)
+            }), Modifier.fillMaxSize(), now) }
+        } }
+        compose.onNodeWithTag("academic_identity").assertDoesNotExist()
+        compose.onNodeWithText("登录并导入考试与成绩").assertDoesNotExist()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_import_undergraduate").assertIsNotEnabled()
+        compose.onNodeWithText("导入研究生考试").assertIsDisplayed()
+        compose.onNodeWithTag("academic_add_exam").assertTextEquals("添加自定义考试")
+        screenshot("11-exam-add-menu")
+        compose.onNodeWithTag("academic_import_graduate").performClick()
+        assertEquals(listOf(AcademicRequest(AcademicQueryTarget.EXAMS, AcademicQueryIntent.IMPORT)), requests)
+        compose.runOnIdle { grades = true }
+        compose.onNodeWithTag("academic_refresh").performClick()
+        assertEquals(AcademicRequest(AcademicQueryTarget.GRADES, AcademicQueryIntent.REFRESH), requests.last())
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithText("导入研究生成绩").assertIsDisplayed()
+        compose.onNodeWithTag("academic_import_undergraduate").assertIsNotEnabled()
+        compose.onNodeWithTag("academic_add_exam").assertDoesNotExist()
+        compose.onNodeWithTag("academic_import_graduate").performClick()
+        assertEquals(AcademicRequest(AcademicQueryTarget.GRADES, AcademicQueryIntent.IMPORT), requests.last())
+    }
+
+    @Test fun loadingAndOutcomeKeepToolbarAndFirstCardAnchoredAndOfferCancellation() {
+        var ui by mutableStateOf(previewState())
+        var cancellations = 0
+        compose.setContent { AcademicPreviewTheme {
+            CompositionLocalProvider(LocalReducedMotion provides true) {
+                AcademicContentBody(false, ui, AcademicActions(cancel = { cancellations++ }), Modifier.fillMaxSize(), now)
+            }
+        } }
+        val refresh = compose.onNodeWithTag("academic_refresh_slot").fetchSemanticsNode().boundsInRoot
+        val add = compose.onNodeWithTag("academic_add_slot").fetchSemanticsNode().boundsInRoot
+        val card = compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot
+        compose.runOnIdle { ui = ui.copy(busy = true, request = AcademicRequest(AcademicQueryTarget.EXAMS, AcademicQueryIntent.REFRESH)) }
+        compose.onNodeWithTag("academic_refresh_loading", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("academic_cancel_query").assertIsEnabled().performClick()
+        assertEquals(1, cancellations)
+        assertEquals(refresh, compose.onNodeWithTag("academic_refresh_slot").fetchSemanticsNode().boundsInRoot)
+        assertEquals(add, compose.onNodeWithTag("academic_add_slot").fetchSemanticsNode().boundsInRoot)
+        assertEquals(card, compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot)
+        compose.runOnIdle { ui = ui.copy(busy = false, request = null, examMessage = "更新成功") }
+        assertEquals(card, compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot)
+        compose.runOnIdle { ui = ui.copy(busy = true, request = AcademicRequest(AcademicQueryTarget.EXAMS, AcademicQueryIntent.IMPORT)) }
+        compose.onNodeWithTag("academic_import_loading", useUnmergedTree = true).assertExists()
+        assertEquals(card, compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot)
+        screenshot("12-exam-import-loading")
+    }
+
+    @Test fun fullExamFieldsAndActionsAreOnlyShownAfterOpeningDetails() {
+        compose.setContent { AcademicPreviewTheme { AcademicContentBody(false, previewState(), AcademicActions(), Modifier.fillMaxSize(), now) } }
+        compose.onNodeWithText("TEST-601").assertDoesNotExist()
+        compose.onNodeWithTag("edit_exam_fixture-school").assertDoesNotExist()
+        openExam("fixture-school")
+        compose.onNodeWithText("TEST-601").assertExists()
+        compose.onNodeWithTag("edit_exam_fixture-school").assertIsDisplayed()
+        screenshot("13-exam-details")
+        compose.onNodeWithTag("academic_close_details").performClick()
+        compose.onNodeWithTag("academic_exam_details").assertDoesNotExist()
+    }
+
+    @Test fun controlledLoginKeepsDraftAcrossRecreationAndNewCaptchaWithoutAutomaticallySubmitting() {
+        val bytes = ByteArrayOutputStream().use { stream ->
+            Bitmap.createBitmap(90, 32, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE) }
+                .compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        }
+        var page by mutableStateOf(AcademicLoginPage("fictional-first", bytes))
+        var draft by mutableStateOf(AcademicLoginDraft("fictional-student", "fictional-password"))
+        var submissions = 0
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { AcademicPreviewTheme { AcademicLoginForm(page, false, null, {}, {
+            page = AcademicLoginPage("fictional-second", bytes.clone()); draft = draft.copy(captcha = "")
+        }, { _, _, _, _ -> submissions++ }, draft, { draft = it }, actionLabel = "刷新成绩") } }
+        compose.onNodeWithTag("academic_remember_password").assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithTag("academic_captcha").performTextInput("1234")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("academic_username").assertTextContains("fictional-student")
+        compose.onNodeWithTag("academic_password").assertTextContains("fictional-password")
+        compose.onNodeWithTag("academic_captcha").assertTextContains("1234")
+        compose.onNodeWithTag("academic_refresh_captcha").performClick()
+        compose.onNodeWithTag("academic_username").assertTextContains("fictional-student")
+        compose.onNodeWithTag("academic_password").assertTextContains("fictional-password")
+        compose.onNodeWithTag("academic_remember_password").assertIsOn()
+        compose.onNodeWithTag("academic_submit").assertIsNotEnabled()
+        assertEquals(0, submissions)
+        screenshot("14-graduate-login")
+    }
+
+    @Test @Config(qualifiers = "w320dp-h360dp-xxhdpi")
+    fun doubleFontCompactLoginKeepsActionsFixedAndFieldsScrollable() {
+        val bytes = ByteArrayOutputStream().use { stream ->
+            Bitmap.createBitmap(90, 32, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        }
+        var draft by mutableStateOf(AcademicLoginDraft("fictional-student", "fictional-password", "1234"))
+        var busy by mutableStateOf(false)
+        compose.setContent { AcademicPreviewTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f), LocalReducedMotion provides true) {
+                AcademicLoginForm(AcademicLoginPage("fictional-page", bytes), busy, null, {}, {}, { _, _, _, _ -> }, draft, { draft = it })
+            }
+        } }
+        val cancel = compose.onNodeWithTag("academic_cancel_login").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val submit = compose.onNodeWithTag("academic_submit").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        listOf("academic_username", "academic_password", "academic_remember_password", "academic_captcha", "academic_refresh_captcha").forEach { tag ->
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            assertEquals(cancel, compose.onNodeWithTag("academic_cancel_login").fetchSemanticsNode().boundsInRoot)
+            assertEquals(submit, compose.onNodeWithTag("academic_submit").fetchSemanticsNode().boundsInRoot)
+        }
+        compose.runOnIdle { busy = true }
+        assertEquals(submit, compose.onNodeWithTag("academic_submit").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithTag("academic_cancel_login").assertIsEnabled()
+        compose.onNodeWithTag("academic_submit").assertIsNotEnabled()
+        screenshot("15-compact-login-loading")
+    }
+
+    @Test fun photoBackgroundAtMinimumCardOpacityKeepsBothThemesAndPagesReadable() {
+        val bitmap = Bitmap.createBitmap(120, 200, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(30, 70, 110))
+            android.graphics.Canvas(this).drawRect(0f, 50f, 100f, 160f, android.graphics.Paint().apply { color = android.graphics.Color.rgb(240, 190, 100) })
+        }
+        val wallpaper = WallpaperState().apply {
+            preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoName = WallpaperPreferences.LEGACY_PHOTO,
+                photoBlurDp = 12, themeMode = AppThemeMode.LIGHT, cardOpacityPercent = 84)
+            image = bitmap.asImageBitmap()
+        }
+        var grades by mutableStateOf(false)
+        compose.setContent { AcademicPreviewTheme(wallpaper.preferences) {
+            AppShell(Tab.MY, {}, wallpaper, remember { SnackbarHostState() }) { padding ->
+                key(grades) { AcademicContentBody(grades, previewState(), AcademicActions(), Modifier.padding(padding), now) }
+            }
+        } }
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
+            compose.runOnIdle { wallpaper.preferences = wallpaper.preferences.copy(themeMode = mode); grades = false }
+            compose.onNodeWithTag("exam_fixture-school").assertIsDisplayed()
+            screenshot("16-photo-${mode.name}-exams")
+            compose.runOnIdle { grades = true }
+            compose.onNodeWithTag("academic_grades").performScrollToNode(hasTestTag("grade_0_0"))
+            compose.onNodeWithTag("grade_0_0").assertIsDisplayed()
+            screenshot("16-photo-${mode.name}-grades")
+        }
     }
 
     private fun previewState(): AcademicUiState {
@@ -409,7 +571,7 @@ class AcademicUiTest {
         compose.setContent { AcademicPreviewTheme {
             AppShell(Tab.MY, {}, WallpaperState(), remember { SnackbarHostState() }) { padding ->
                 Column(Modifier.padding(padding)) {
-                    PageHeader("考试管理", null)
+
                     AcademicContentBody(false, previewState(), AcademicActions(), Modifier.weight(1f), now)
                 }
             }
@@ -423,7 +585,7 @@ class AcademicUiTest {
         compose.setContent { AcademicPreviewTheme {
             AppShell(Tab.MY, {}, WallpaperState(), remember { SnackbarHostState() }) { padding ->
                 Column(Modifier.padding(padding)) {
-                    PageHeader("成绩管理", null)
+
                     AcademicContentBody(true, previewState(), AcademicActions(), Modifier.weight(1f), now)
                 }
             }
@@ -468,7 +630,7 @@ class AcademicUiTest {
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 AppShell(Tab.MY, {}, WallpaperState(), remember { SnackbarHostState() }) { padding ->
                     Column(Modifier.padding(padding)) {
-                        PageHeader(if (grades) "成绩管理" else "考试管理", null)
+
                         key(grades) {
                             AcademicContentBody(grades, previewState(), AcademicActions(), Modifier.weight(1f), now)
                         }
@@ -490,7 +652,7 @@ class AcademicUiTest {
 
 /** Preview-only font injection; no font is bundled in the application or written into the repository. */
 @Composable
-private fun AcademicPreviewTheme(content: @Composable () -> Unit) {
+private fun AcademicPreviewTheme(appearance: WallpaperPreferences = WallpaperPreferences(), content: @Composable () -> Unit) {
     val family = remember {
         val fonts = listOf(FontWeight.Normal to "Noto Sans SC (TrueType).otf", FontWeight.Medium to "Noto Sans SC Medium (TrueType).otf",
             FontWeight.Bold to "Noto Sans SC Bold (TrueType).otf").map { (weight, name) -> weight to File("C:/Windows/Fonts", name) }
@@ -501,7 +663,7 @@ private fun AcademicPreviewTheme(content: @Composable () -> Unit) {
             else -> FontFamily.Default
         }
     }
-    GongXiaoZhuTheme {
+    GongXiaoZhuTheme(appearance) {
         val t = MaterialTheme.typography
         fun TextStyle.withPreviewFont() = copy(fontFamily = family)
         MaterialTheme(typography = Typography(t.displayLarge.withPreviewFont(), t.displayMedium.withPreviewFont(), t.displaySmall.withPreviewFont(),

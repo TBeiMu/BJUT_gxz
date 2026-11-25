@@ -145,7 +145,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var resetting by remember { mutableStateOf(false) }
     val updateUnobstructed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && !localDialogVisible &&
         state.schedule.page == null && state.editor == null && state.courseEditor == null && !resetSchedule && !resetting && deleting == null &&
-        state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null && state.academic.login == null
+        state.billing.webPage == null && !state.billing.offerWeb && state.billing.confirmation == null && state.academic.login == null && state.academic.pendingIdentity == null
     val updateDialogVisible = updateUnobstructed && (updates.prompt != null || updates.mobileConfirmation != null)
     LaunchedEffect(openUpdatesRequest) {
         if (openUpdatesRequest > 0) open(MyDestination.UPDATES, Tab.MY)
@@ -169,6 +169,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     UpdateCheckFeedback(updateActions.repository, snackbar, snackbarUnobstructed, updateActions.releasePage)
     CourseUndoFeedback(model, state.schedule.courseUndo.takeUnless { state.courseSaving }, snackbar, snackbarUnobstructed)
     AcademicUndoFeedback(model.academicController, state.academic.undo.takeUnless { state.academic.saving }, snackbar, snackbarUnobstructed)
+    AcademicQueryFeedback(model.academicController, snackbar, snackbarUnobstructed)
     val nameFeedbackVisible = snackbarUnobstructed && !state.busy &&
         !state.loading && !state.storageBlocked
     LaunchedEffect(model, nameFeedbackVisible) {
@@ -196,7 +197,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         { open(MyDestination.SCHEDULE, Tab.SCHEDULE) }, connectionNotice = model.connectionNotice,
                         titleUnobstructed = state.schedule.page == null && state.editor == null && !resetSchedule &&
                             !resetting && deleting == null && state.billing.webPage == null && !state.billing.offerWeb &&
-                            state.billing.confirmation == null && state.courseEditor == null && state.academic.login == null && !updateDialogVisible,
+                            state.billing.confirmation == null && state.courseEditor == null && state.academic.login == null && state.academic.pendingIdentity == null && !updateDialogVisible,
                         onCancelImport = model.scheduleController::cancelImport,
                         onDialogVisibilityChanged = { localDialogVisible = it },
                         onAddCourse = { week, day -> model.editCourse(week = week, weekday = day) },

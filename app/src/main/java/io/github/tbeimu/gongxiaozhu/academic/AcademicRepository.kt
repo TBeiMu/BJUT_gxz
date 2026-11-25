@@ -57,6 +57,34 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
             require(exams.size <= MAX_EXAMS && updatedAt > 0)
             exams.map { normalizeExam(it).also(::validateSchoolExam) }
         }
+        persist(current.copy(exams = mergeExams(current, originals), examUpdatedAt = updatedAt), isCurrent)
+    }
+
+    /** A confirmed account switch and its first complete result are one atomic vault write. */
+    suspend fun commitQuery(identity: AcademicIdentity, result: AcademicQueryResult, expectedRevision: Long,
+        allowAccountChange: Boolean = false, isCurrent: () -> Boolean = { true }): AcademicData = locked {
+        guard(isCurrent)
+        val current = requireCurrent(expectedRevision)
+        val normalized = incoming { normalizeIdentity(identity).also(::validateIdentity) }
+        val switching = current.identity?.studentId?.let { it != normalized.studentId } == true
+        if (switching && !allowAccountChange) throw AcademicException(AcademicProblem.ACCOUNT_MISMATCH)
+        val verified = normalized.copy(name = normalized.name.ifBlank { if (switching) "" else current.identity?.name.orEmpty() })
+        val base = if (switching) current.copy(identity = verified, exams = current.exams.filter { it.original == null },
+            examUpdatedAt = null, grades = null) else current.copy(identity = verified)
+        val next = when (result) {
+            is AcademicQueryResult.Exams -> {
+                val originals = incoming {
+                    require(result.records.size <= MAX_EXAMS && result.updatedAt > 0)
+                    result.records.map { normalizeExam(it).also(::validateSchoolExam) }
+                }
+                base.copy(exams = mergeExams(base, originals), examUpdatedAt = result.updatedAt)
+            }
+            is AcademicQueryResult.Grades -> base.copy(grades = incoming { normalizeGrades(result.snapshot).also(::validateGrades) })
+        }
+        persist(next, isCurrent)
+    }
+
+    private fun mergeExams(current: AcademicData, originals: List<SchoolExam>): List<ExamRecord> {
         val oldSchool = current.exams.filter { it.original != null }
         val oldGroups = oldSchool.groupBy { it.original!! }
         val newGroups = originals.groupingBy { it }.eachCount()
@@ -69,7 +97,7 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
         val preserved = oldSchool.filter { it.id !in matched && (it.modified || it.hidden) }
             .map { it.copy(retained = true) }
         val manual = current.exams.filter { it.original == null }
-        persist(current.copy(exams = refreshed + preserved + manual, examUpdatedAt = updatedAt), isCurrent)
+        return refreshed + preserved + manual
     }
 
     suspend fun saveGrades(identity: AcademicIdentity, grades: GradeSnapshot,

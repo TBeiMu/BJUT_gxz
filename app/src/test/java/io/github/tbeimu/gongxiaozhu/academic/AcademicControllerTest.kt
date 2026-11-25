@@ -22,9 +22,11 @@ import javax.crypto.spec.SecretKeySpec
 class AcademicControllerTest {
     private class Memory : VaultStore {
         var bytes: ByteArray? = null
+        var failWrite = false
+        var failClear = false
         override fun read() = bytes?.clone()
-        override fun write(bytes: ByteArray) { this.bytes = bytes.clone() }
-        override fun clear() { bytes = null }
+        override fun write(bytes: ByteArray) { if (failWrite) error("Fictional write failure"); this.bytes = bytes.clone() }
+        override fun clear() { if (failClear) error("Fictional clear failure"); bytes = null }
     }
     private class Session : AcademicSession {
         var submitted = 0; var closes = 0; var examCalls = 0; var gradeCalls = 0
@@ -58,6 +60,14 @@ class AcademicControllerTest {
     }
     private class Fixture(scope: TestScope, val session: Session = Session(), route: Boolean = true, immediate: Boolean = false) {
         val store = Memory()
+        val credentialStore = Memory()
+        val credentials = AcademicCredentialsRepository(credentialStore, AesGcmVaultCipher(object : VaultKeySource {
+            private val key = SecretKeySpec(ByteArray(32) { 11 }, "AES")
+            override fun encryptionKey() = key
+            override fun decryptionKey() = key
+            override fun clear() = Unit
+        }))
+        var defaultUsername = ""
         val dispatcher = if (immediate) UnconfinedTestDispatcher(scope.testScheduler) else StandardTestDispatcher(scope.testScheduler)
         val repository = AcademicRepository(store, AesGcmVaultCipher(object : VaultKeySource {
             private val key = SecretKeySpec(ByteArray(32) { 7 }, "AES")
@@ -69,9 +79,10 @@ class AcademicControllerTest {
         var elapsed = 100L
         val routes = MutableStateFlow(if (route) AcademicConnection("network-one", "WiFi") { created++; session } else null)
         private val controllerScope = CoroutineScope(scope.backgroundScope.coroutineContext + dispatcher)
-        val controller = AcademicController(controllerScope, repository, routes, dispatcher, { 1000L }, { elapsed })
+        val controller = AcademicController(controllerScope, repository, routes, dispatcher, { 1000L }, { elapsed },
+            credentials, { defaultUsername })
         init { controller.enterForeground() }
-        fun start() = controller.start()
+        fun start(target: AcademicQueryTarget = AcademicQueryTarget.EXAMS) = controller.start(target)
         fun submit() = controller.submit("fictional-token", "fictional-2026", "fictional-password", "test")
     }
 
@@ -83,29 +94,40 @@ class AcademicControllerTest {
         assertEquals("本地考试", f.controller.state.value.data.exams.single().fields.name)
         assertNull(f.controller.state.value.data.identity)
     }
-    @Test fun oneExplicitLoginReadsBothAndIndependentSnapshotsAreSaved() = runTest {
+    @Test fun explicitLoginReadsOnlyTheSelectedProjectAndDoesNotResubmitCredentials() = runTest {
         val f = Fixture(this); runCurrent(); f.start(); runCurrent()
         assertFalse(f.controller.state.value.busy)
         assertNotNull(f.controller.state.value.login)
         f.submit(); f.submit(); runCurrent()
         val state = f.controller.state.value
-        assertEquals(1, f.session.submitted); assertEquals(1, f.session.examCalls); assertEquals(1, f.session.gradeCalls)
-        assertEquals(1, state.data.exams.size); assertEquals("优秀", state.data.grades!!.degree.single().grade)
+        assertEquals(1, f.session.submitted); assertEquals(1, f.session.examCalls); assertEquals(0, f.session.gradeCalls)
+        assertEquals(1, state.data.exams.size); assertNull(state.data.grades)
         assertFalse(state.busy); assertNull(state.login)
+        val before = state.data.exams
+        f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        assertEquals(1, f.session.examCalls); assertEquals(1, f.session.gradeCalls)
+        assertEquals(before, f.controller.state.value.data.exams)
+        assertEquals("优秀", f.controller.state.value.data.grades!!.degree.single().grade)
     }
-    @Test fun failureInExamsDoesNotPreventGradeImport() = runTest {
-        val f = Fixture(this); f.session.failExams = true; runCurrent(); f.start(); runCurrent(); f.submit(); runCurrent()
+    @Test fun examFailureKeepsTheExistingGradeSnapshotAndDoesNotQueryGradesAgain() = runTest {
+        val f = Fixture(this); runCurrent(); f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        val before = f.controller.state.value.data
+        f.session.failExams = true; f.start(); runCurrent(); f.submit(); runCurrent()
         assertNull(f.controller.state.value.data.examUpdatedAt)
         assertNotNull(f.controller.state.value.data.grades)
-        assertEquals("查询成功", f.controller.state.value.gradeMessage)
-        assertTrue(f.controller.state.value.message!!.contains("部分"))
+        assertEquals(before, f.controller.state.value.data)
+        assertEquals("更新成功", f.controller.state.value.gradeMessage)
+        assertEquals(1, f.session.gradeCalls)
+        assertEquals("查询失败", f.controller.state.value.examMessage)
     }
     @Test fun failureInGradesPreservesExamSuccessAndOldGradeTimestamp() = runTest {
         val f = Fixture(this); runCurrent(); f.start(); runCurrent(); f.submit(); runCurrent()
-        val before = f.controller.state.value.data.grades
-        f.session.failGrades = true; f.start(); runCurrent(); f.submit(); runCurrent()
-        assertEquals(before, f.controller.state.value.data.grades)
-        assertEquals("查询成功", f.controller.state.value.examMessage)
+        f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        val before = f.controller.state.value.data
+        f.session.failGrades = true; f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        assertEquals(before, f.controller.state.value.data)
+        assertEquals("更新成功", f.controller.state.value.examMessage)
+        assertEquals(1, f.session.examCalls)
     }
     @Test fun leavingForegroundInvalidatesLateIdentityAndHoldsSlotUntilCleanup() = runTest {
         val f = Fixture(this); f.session.waiting = CompletableDeferred(); f.session.cleanup = CompletableDeferred()
@@ -141,12 +163,13 @@ class AcademicControllerTest {
     @Test fun lateGradeFailureCannotReplaceNetworkChangeWithOldAggregateResult() = runTest {
         val f = Fixture(this); f.session.gradeWaiting = CompletableDeferred(); f.session.failGrades = true
         runCurrent(); f.start(); runCurrent(); f.submit(); runCurrent()
-        assertEquals("查询成功", f.controller.state.value.examMessage)
+        f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        assertEquals("更新成功", f.controller.state.value.examMessage)
         assertEquals("正在查询", f.controller.state.value.gradeMessage)
         f.routes.value = AcademicConnection("network-two", "移动数据") { f.session }; runCurrent()
         f.session.gradeWaiting!!.complete(Unit); runCurrent()
         assertEquals("网络已变化，请手动重新登录", f.controller.state.value.message)
-        assertEquals("查询成功", f.controller.state.value.examMessage); assertNull(f.controller.state.value.gradeMessage)
+        assertEquals("更新成功", f.controller.state.value.examMessage); assertNull(f.controller.state.value.gradeMessage)
         assertNull(f.controller.state.value.data.grades); assertFalse(f.controller.state.value.busy)
     }
     @Test fun differentStudentCannotReplaceBindingOrManualExams() = runTest {
@@ -155,7 +178,129 @@ class AcademicControllerTest {
         f.session.identity = AcademicIdentity("fictional-other")
         f.start(); runCurrent(); f.submit(); runCurrent()
         assertEquals(before, f.controller.state.value.data)
-        assertEquals(AcademicProblem.ACCOUNT_MISMATCH.hint, f.controller.state.value.message)
+        assertEquals(f.session.identity, f.controller.state.value.pendingIdentity)
+        f.controller.cancel(); runCurrent()
+        assertEquals(before, f.controller.state.value.data)
+        assertNull(f.controller.state.value.pendingIdentity)
+    }
+
+    @Test fun confirmedAccountChangeCommitsOnlyAfterACompleteResultAndKeepsCustomExams() = runTest {
+        val f = Fixture(this); runCurrent()
+        f.controller.saveExam(null, ExamFields("自定义示例"), 0); runCurrent()
+        f.start(); runCurrent(); f.submit(); runCurrent()
+        f.start(AcademicQueryTarget.GRADES); runCurrent(); f.submit(); runCurrent()
+        val before = f.controller.state.value.data
+        f.session.identity = AcademicIdentity("fictional-other")
+        f.start(); runCurrent(); f.submit(); runCurrent()
+        assertEquals(before, f.controller.state.value.data)
+        f.session.examWaiting = CompletableDeferred()
+        f.controller.confirmAccountChange(); f.controller.confirmAccountChange(); runCurrent()
+        assertEquals(before, f.controller.state.value.data)
+        f.session.examWaiting!!.complete(Unit); runCurrent()
+        val after = f.controller.state.value.data
+        assertEquals("fictional-other", after.identity!!.studentId)
+        assertNull(after.grades)
+        assertEquals(before.exams.filter { it.original == null }, after.exams.filter { it.original == null })
+        assertEquals(2, f.session.examCalls)
+    }
+
+    @Test fun failedOrCancelledAccountChangeLeavesOldDiskAndIdentityIntact() = runTest {
+        val f = Fixture(this); runCurrent(); f.start(); runCurrent(); f.submit(); runCurrent()
+        val before = f.controller.state.value.data; val bytes = f.store.bytes!!.clone()
+        f.session.identity = AcademicIdentity("fictional-other"); f.session.failExams = true
+        f.start(); runCurrent(); f.submit(); runCurrent(); f.controller.confirmAccountChange(); runCurrent()
+        assertEquals(before, f.controller.state.value.data); assertArrayEquals(bytes, f.store.bytes)
+        assertFalse(f.controller.state.value.busy)
+    }
+
+    @Test fun defaultsFollowTheCurrentCampusUsernameWithoutCampusPasswordAndDraftSurvivesCaptchaRefresh() = runTest {
+        val f = Fixture(this); runCurrent(); f.start(); runCurrent()
+        assertEquals(AcademicLoginDraft(), f.controller.state.value.loginDraft)
+        f.controller.cancel(); runCurrent(); f.defaultUsername = "  fictional-2026  "
+        f.start(); runCurrent()
+        assertEquals("fictional-2026", f.controller.state.value.loginDraft!!.username)
+        assertEquals("", f.controller.state.value.loginDraft!!.password)
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(password = "fictional-secret", captcha = "old", rememberPassword = true))
+        f.controller.refreshCaptcha("fictional-token"); runCurrent()
+        assertEquals(AcademicLoginDraft("fictional-2026", "fictional-secret", rememberPassword = true), f.controller.state.value.loginDraft)
+        f.controller.leaveForeground(); runCurrent()
+        assertNull(f.controller.state.value.loginDraft); assertNull(f.credentialStore.bytes)
+    }
+
+    @Test fun rememberingIsOptInSharedByBothPagesAndUncheckingClearsItImmediately() = runTest {
+        val f = Fixture(this); f.defaultUsername = "fictional-2026"; runCurrent()
+        f.start(); runCurrent(); f.submit(); runCurrent(); assertNull(f.credentialStore.bytes)
+        f.start(); runCurrent()
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = true))
+        f.submit(); runCurrent()
+        assertEquals("fictional-password", f.credentials.load()!!.password)
+        f.start(AcademicQueryTarget.GRADES); runCurrent()
+        assertEquals("fictional-password", f.controller.state.value.loginDraft!!.password)
+        assertTrue(f.controller.state.value.loginDraft!!.rememberPassword)
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = false)); runCurrent()
+        assertNull(f.credentials.load())
+        assertEquals("fictional-password", f.controller.state.value.loginDraft!!.password)
+        f.controller.cancel(); runCurrent()
+    }
+
+    @Test fun changingUsernameCannotCarryAnotherAccountsPasswordOrRememberChoice() = runTest {
+        val f = Fixture(this); runCurrent()
+        f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "remembered-secret"))
+        f.defaultUsername = "fictional-2026"; f.start(); runCurrent()
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(username = "fictional-other"))
+        assertEquals("", f.controller.state.value.loginDraft!!.password)
+        assertFalse(f.controller.state.value.loginDraft!!.rememberPassword)
+        f.controller.cancel(); runCurrent()
+        f.defaultUsername = ""; f.start(); runCurrent()
+        assertEquals("", f.controller.state.value.loginDraft!!.username)
+        assertEquals("", f.controller.state.value.loginDraft!!.password)
+    }
+
+    @Test fun failedCredentialWriteDoesNotBlockQueryAndUnbindClearsRememberedCredentials() = runTest {
+        val f = Fixture(this); f.defaultUsername = "fictional-2026"; runCurrent(); f.start(); runCurrent()
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = true))
+        f.credentialStore.failWrite = true; f.submit(); runCurrent()
+        assertNotNull(f.controller.state.value.data.examUpdatedAt)
+        assertFalse(f.controller.state.value.blocked)
+        assertNotNull(f.controller.state.value.credentialMessage)
+        assertNull(f.credentials.load())
+        f.credentialStore.failWrite = false
+        f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "remembered-secret"))
+        f.controller.unbind(f.controller.state.value.data.revision); runCurrent()
+        assertNull(f.controller.state.value.data.identity); assertNull(f.credentials.load())
+    }
+
+    @Test fun cancellingAfterLoginCannotPersistAFormerTasksPasswordOrQueryResult() = runTest {
+        val f = Fixture(this); f.defaultUsername = "fictional-2026"; runCurrent(); f.start(); runCurrent()
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = true))
+        f.session.examWaiting = CompletableDeferred(); f.submit(); runCurrent()
+        f.controller.cancel(); runCurrent(); f.session.examWaiting!!.complete(Unit); runCurrent()
+        assertNull(f.store.bytes); assertNull(f.credentialStore.bytes)
+        assertNull(f.controller.state.value.loginDraft); assertNull(f.controller.state.value.request)
+        assertFalse(f.controller.state.value.busy)
+    }
+
+    @Test fun corruptPasswordStorageStillAllowsManualImportWithoutReplacingTheDamagedFile() = runTest {
+        val f = Fixture(this); val damaged = ByteArray(40) { 1 }; f.credentialStore.bytes = damaged.clone()
+        f.defaultUsername = "fictional-2026"; runCurrent(); assertFalse(f.controller.state.value.blocked)
+        f.start(); runCurrent(); assertEquals("", f.controller.state.value.loginDraft!!.password)
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = true))
+        f.submit(); runCurrent()
+        assertNotNull(f.controller.state.value.data.examUpdatedAt)
+        assertFalse(f.controller.state.value.blocked); assertNotNull(f.controller.state.value.credentialMessage)
+        assertArrayEquals(damaged, f.credentialStore.bytes)
+        f.controller.forgetPassword(); runCurrent(); assertNull(f.credentialStore.bytes)
+    }
+
+    @Test fun failedPasswordDeletionCannotClaimUnboundOrClearSchoolData() = runTest {
+        val f = Fixture(this); runCurrent(); f.start(); runCurrent(); f.submit(); runCurrent()
+        val before = f.controller.state.value.data
+        f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "remembered-secret"))
+        f.credentialStore.failClear = true
+        f.controller.unbind(before.revision); runCurrent()
+        assertEquals(before, f.controller.state.value.data); assertNotNull(f.credentials.load())
+        assertFalse(f.controller.state.value.blocked); assertFalse(f.controller.state.value.saving)
+        assertTrue(f.controller.state.value.message!!.contains("密码未能清除"))
     }
     @Test fun onlyRealExistingEditGetsUndoAndUndoChecksExpiry() = runTest {
         val f = Fixture(this); runCurrent()

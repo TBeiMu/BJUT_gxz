@@ -51,6 +51,25 @@ data class AcademicData(val schema: Int = 1, val identity: AcademicIdentity? = n
     override fun toString() = "AcademicData(schema=$schema, revision=$revision, data=<redacted>)"
 }
 
+enum class AcademicQueryTarget(val title: String) { EXAMS("考试"), GRADES("成绩") }
+enum class AcademicQueryIntent { IMPORT, REFRESH }
+data class AcademicRequest(val target: AcademicQueryTarget, val intent: AcademicQueryIntent)
+
+/** In-memory form state, intentionally outside saved instance state and the academic snapshot. */
+data class AcademicLoginDraft(val username: String = "", val password: String = "", val captcha: String = "",
+    val rememberPassword: Boolean = false) {
+    override fun toString() = "AcademicLoginDraft(<redacted>)"
+}
+
+sealed interface AcademicQueryResult {
+    data class Exams(val records: List<SchoolExam>, val updatedAt: Long) : AcademicQueryResult {
+        override fun toString() = "Exams(<redacted>)"
+    }
+    data class Grades(val snapshot: GradeSnapshot) : AcademicQueryResult {
+        override fun toString() = "Grades(<redacted>)"
+    }
+}
+
 enum class AcademicProblem(val hint: String) {
     CONNECTION("教务服务无法连接，请确认 WiFi 或移动数据可上网后手动重试"),
     LOGIN("学校登录未完成，请检查页面信息后重新提交"),

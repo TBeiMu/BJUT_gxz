@@ -27,7 +27,9 @@ class CampusLoginRuntime private constructor(context: Context) {
     val scheduleImport = io.github.tbeimu.gongxiaozhu.schedule.ScheduleImportRuntime.get(context)
     val academic = io.github.tbeimu.gongxiaozhu.academic.AcademicController(scope,
         io.github.tbeimu.gongxiaozhu.academic.createAcademicRepository(context),
-        io.github.tbeimu.gongxiaozhu.academic.academicNetworks(context))
+        io.github.tbeimu.gongxiaozhu.academic.academicNetworks(context),
+        credentials = io.github.tbeimu.gongxiaozhu.academic.createAcademicCredentialsRepository(context),
+        defaultUsername = { if (storageBlocked.value) "" else accounts.state.value?.defaultAccount?.username.orEmpty() })
     val connectionNotice = CampusConnectionNotice(scope)
     private val blocked = MutableStateFlow(false)
     val storageBlocked = blocked.asStateFlow()

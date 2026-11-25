@@ -22,6 +22,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AcademicRepositoryTest {
+    @Test fun accountSwitchAndSelectedResultAreAtomicAndKeepCustomExamsOnly() = runBlocking {
+        val f = Fixture(); f.start(bound = true)
+        f.repository.saveExams(identity, listOf(exam), 1000)
+        f.repository.saveGrades(identity, grades())
+        val before = f.repository.saveExam(null, ExamFields("自定义示例"), f.repository.state.value!!.revision)
+        val other = AcademicIdentity("fictional-other")
+        val result = AcademicQueryResult.Grades(grades(3000))
+        expectProblem(AcademicProblem.ACCOUNT_MISMATCH) { f.repository.commitQuery(other, result, before.revision) }
+        assertEquals(before, f.repository.load())
+        f.store.failWrite = true
+        expectProblem(AcademicProblem.STORAGE) { f.repository.commitQuery(other, result, before.revision, true) }
+        f.store.failWrite = false
+        assertEquals(before, f.repository.load())
+        val after = f.repository.commitQuery(other, result, before.revision, true)
+        assertEquals(other, after.identity); assertNull(after.examUpdatedAt)
+        assertEquals(before.exams.filter { it.original == null }, after.exams)
+        assertEquals(grades(3000), after.grades)
+        assertEquals(after, f.repository.load())
+    }
+
+    @Test fun selectedQueryPreservesOtherProjectAndCannotCommitAgainstAStaleRevision() = runBlocking {
+        val f = Fixture(); val empty = f.start()
+        val first = f.repository.commitQuery(identity, AcademicQueryResult.Exams(listOf(exam), 1000), empty.revision)
+        val second = f.repository.commitQuery(identity, AcademicQueryResult.Grades(grades()), first.revision)
+        assertEquals(first.exams, second.exams); assertEquals(first.examUpdatedAt, second.examUpdatedAt)
+        assertTrue(runCatching { f.repository.commitQuery(identity, AcademicQueryResult.Exams(emptyList(), 3000), first.revision) }
+            .exceptionOrNull() is AcademicValidationException)
+        assertEquals(second, f.repository.load())
+        val third = f.repository.commitQuery(identity, AcademicQueryResult.Exams(emptyList(), 3000), second.revision)
+        assertTrue(third.exams.isEmpty()); assertEquals(second.grades, third.grades)
+    }
     private class Store : VaultStore {
         var bytes: ByteArray? = null
         var failRead = false

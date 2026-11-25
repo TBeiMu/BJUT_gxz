@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -32,6 +33,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.tbeimu.gongxiaozhu.academic.*
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.io.ByteArrayOutputStream
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -69,7 +71,6 @@ class AcademicDeviceUiTest {
                 GongXiaoZhuTheme { AppBackdrop(WallpaperState()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                         Column(Modifier.widthIn(max = width.dp).fillMaxWidth().heightIn(max = height.dp).fillMaxHeight()) {
-                            PageHeader(if (grades()) "成绩管理" else "考试管理", null)
                             key(grades()) { AcademicContentBody(grades(), state(), actions, Modifier.weight(1f), now) }
                         }
                     }
@@ -82,8 +83,11 @@ class AcademicDeviceUiTest {
         compose.onNodeWithTag(tag).performScrollToNode(matcher)
     }
 
-    private fun readable(text: String) {
-        compose.onNodeWithText(text, substring = false).assertIsDisplayed().performSemanticsAction(
+    private fun readable(text: String, details: Boolean = false) {
+        val node = if (details) compose.onNode(hasText(text) and hasAnyAncestor(hasTestTag("academic_details_body")), useUnmergedTree = true)
+            else compose.onNodeWithText(text, useUnmergedTree = true)
+        if (details) node.performScrollTo()
+        node.assertIsDisplayed().performSemanticsAction(
             SemanticsActions.GetTextLayoutResult) { get ->
             val layouts = mutableListOf<TextLayoutResult>()
             assertTrue(get(layouts))
@@ -101,14 +105,16 @@ class AcademicDeviceUiTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         context.getExternalFilesDir(null)?.resolve("academic-device-$name.png")?.outputStream()?.use {
             val target = if (compose.onAllNodesWithTag("exam_editor_overlay").fetchSemanticsNodes().isNotEmpty())
-                compose.onNodeWithTag("exam_editor_overlay") else compose.onRoot()
+                compose.onNodeWithTag("exam_editor_overlay")
+            else if (compose.onAllNodesWithTag("academic_details_overlay").fetchSemanticsNodes().isNotEmpty())
+                compose.onNodeWithTag("academic_details_overlay") else compose.onRoot()
             target.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
         }
     }
 
     @Test fun loadedExamsKeepSchoolFieldsAndAllThreeFilterStatesReachable() {
         render()
-        compose.onNodeWithTag("academic_identity").assertTextEquals("示例同学")
+        compose.onNodeWithTag("academic_identity").assertDoesNotExist()
         compose.onNodeWithTag("academic_refresh").assertIsDisplayed().assertIsEnabled()
         preview("exams-header")
         reach("academic_exams", hasTestTag("exam_filter_UPCOMING"))
@@ -117,10 +123,13 @@ class AcademicDeviceUiTest {
         readable(course)
         reach("academic_exams", hasText(location))
         readable(location)
-        reach("academic_exams", hasTestTag("edit_exam_school"))
+        compose.onNodeWithTag("exam_school").performClick()
         compose.onNodeWithTag("edit_exam_school").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("delete_exam_school").assertIsDisplayed().assertTextEquals("隐藏")
+        readable("FICTIONAL-601", details = true)
+        readable("虚构教学班 01", details = true)
         preview("exams-data")
+        compose.onNodeWithTag("academic_close_details").performClick()
         reach("academic_exams", hasTestTag("exam_filter_FINISHED"))
         compose.onNodeWithTag("exam_filter_FINISHED").performClick().assertIsSelected()
         reach("academic_exams", hasTestTag("exam_past"))
@@ -146,10 +155,13 @@ class AcademicDeviceUiTest {
         preview("grades-data")
         reach("academic_grades", hasTestTag("grade_0_1"))
         compose.onNodeWithText("学校未公布").assertIsDisplayed()
-        reach("academic_grades", hasText("成绩受限 · 以学校显示为准"))
-        readable("成绩受限 · 以学校显示为准")
-        reach("academic_grades", hasTestTag("grade_term_1"))
-        compose.onNodeWithTag("grade_term_1").performClick().assertIsSelected()
+        compose.onNodeWithTag("grade_0_1").performClick()
+        readable("成绩受限 · 以学校显示为准", details = true)
+        compose.onNodeWithTag("academic_close_details").performClick()
+        reach("academic_grades", hasTestTag("grade_term_filter"))
+        compose.onNodeWithTag("grade_term_filter").performClick()
+        compose.onNodeWithTag("grade_term_1").performClick()
+        compose.onNodeWithTag("grade_term_filter").assertTextEquals("2025-2026 春")
         reach("academic_grades", hasTestTag("grade_1_0"))
         readable("示例科研方法")
         compose.onNodeWithText("合格").assertIsDisplayed()
@@ -159,28 +171,29 @@ class AcademicDeviceUiTest {
     @Test fun narrowWindowAtDoubleFontKeepsExamAndGradeDetailsAndActionsReachable() {
         var grades by mutableStateOf(false)
         render(grades = { grades }, fontScale = 2f, width = 320, height = 600)
-        reach("academic_exams", hasTestTag("academic_refresh"))
         compose.onNodeWithTag("academic_refresh").assertIsDisplayed().assertIsEnabled()
         preview("narrow-exams-header")
+        reach("academic_exams", hasTestTag("exam_school"))
+        compose.onNodeWithTag("exam_school").performClick()
         listOf(course, "2026-12-02 09:00", "2026-12-02 11:00", location, "虚构教学班 01").forEach { value ->
-            reach("academic_exams", hasText(value))
-            readable(value)
+            readable(value, details = true)
         }
-        reach("academic_exams", hasTestTag("edit_exam_school"))
         compose.onNodeWithTag("edit_exam_school").assertIsDisplayed().assertHasClickAction()
         compose.onNodeWithTag("delete_exam_school").assertIsDisplayed().assertHasClickAction()
         preview("narrow-exams-data")
+        compose.onNodeWithTag("academic_close_details").performClick()
         compose.runOnIdle { grades = true }
-        reach("academic_grades", hasText("学校学分信息"))
-        readable("学校学分信息")
+        reach("academic_grades", hasText("已修学分"))
+        readable("已修学分")
         preview("narrow-grades-header")
         listOf(course, "优秀").forEach { value ->
             reach("academic_grades", hasText(value))
             readable(value)
         }
         reach("academic_grades", hasTestTag("grade_0_1"))
-        reach("academic_grades", hasText("成绩受限 · 以学校显示为准"))
-        readable("成绩受限 · 以学校显示为准")
+        compose.onNodeWithTag("grade_0_1").performClick()
+        readable("成绩受限 · 以学校显示为准", details = true)
+        compose.onNodeWithTag("academic_close_details").performClick()
         preview("narrow-grades-data")
     }
 
@@ -232,15 +245,50 @@ class AcademicDeviceUiTest {
         compose.runOnIdle { assertFalse(open); assertEquals(0, saves) }
     }
 
+    @Test fun landscapeGraduateLoginKeepsActionsReachableWithLargeFontAndKeyboard() {
+        val previous = compose.activity.requestedOrientation
+        val bytes = ByteArrayOutputStream().use { stream ->
+            Bitmap.createBitmap(90, 32, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        }
+        try {
+            compose.activityRule.scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE }
+            var draft by mutableStateOf(AcademicLoginDraft("fictional-student", "fictional-password"))
+            var busy by mutableStateOf(false)
+            var submissions = 0
+            compose.setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) { GongXiaoZhuTheme {
+                    val page = remember { AcademicLoginPage("fictional-device-page", bytes) }
+                    AcademicLoginForm(page, busy, null, {}, {}, { _, _, _, _ -> submissions++; busy = true },
+                        draft, { draft = it }, actionLabel = "刷新成绩")
+                } }
+            }
+            compose.onNodeWithTag("academic_submit").assertIsDisplayed().assertIsNotEnabled()
+            compose.onNodeWithTag("academic_remember_password").performScrollTo().performClick().assertIsOn()
+            compose.onNodeWithTag("academic_captcha").performScrollTo().performClick().performTextInput("1234")
+            compose.onNodeWithTag("academic_cancel_login").assertIsDisplayed().assertIsEnabled()
+            compose.onNodeWithTag("academic_submit").assertIsDisplayed().assertIsEnabled()
+            compose.runOnIdle { assertEquals(0, submissions) }
+            compose.onNodeWithTag("academic_captcha").performImeAction()
+            compose.runOnIdle { assertEquals(1, submissions) }
+            compose.onNodeWithTag("academic_submit").assertIsDisplayed().assertIsNotEnabled()
+            compose.onNodeWithTag("academic_cancel_login").assertIsDisplayed().assertIsEnabled()
+        } finally { compose.activityRule.scenario.onActivity { it.requestedOrientation = previous } }
+    }
+
     @Test fun emptyOfflineAndStorageFailureStatesKeepTheirMeaningAndSafeActions() {
         var state by mutableStateOf(AcademicUiState(loading = false))
         var grades by mutableStateOf(false)
         var retries = 0
         render(state = { state }, grades = { grades }, actions = AcademicActions(reload = { retries++ }))
         compose.onNodeWithTag("academic_refresh").assertIsNotEnabled()
-        compose.onNodeWithText("当前无可用网络，可查看本机资料。").assertExists()
-        reach("academic_exams", hasTestTag("academic_add_exam"))
-        compose.onNodeWithTag("academic_add_exam").assertIsEnabled()
+        compose.onNodeWithText("离线").assertExists()
+        compose.onNodeWithTag("academic_add").performClick()
+        compose.onNodeWithTag("academic_import_graduate").assertIsNotEnabled()
+        compose.onNodeWithTag("academic_add_exam").assertIsEnabled().performClick()
+        compose.onNodeWithTag("cancel_exam").performClick()
         reach("academic_exams", hasText("还没有考试安排"))
         readable("还没有考试安排")
         preview("empty-offline-exams")
@@ -253,7 +301,7 @@ class AcademicDeviceUiTest {
         reach("academic_grades", hasText("教务资料暂不可用，原资料未被清除。"))
         readable("教务资料暂不可用，原资料未被清除。")
         compose.onNodeWithText("重新读取教务资料").assertIsEnabled().performClick()
-        compose.onNodeWithTag("academic_refresh").assertDoesNotExist()
+        compose.onNodeWithTag("academic_refresh").assertIsNotEnabled()
         compose.onNodeWithTag("academic_add_exam").assertDoesNotExist()
         compose.runOnIdle { assertEquals(1, retries) }
         preview("storage-failure")
