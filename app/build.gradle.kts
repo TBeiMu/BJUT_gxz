@@ -62,6 +62,10 @@ android {
             // DesignPreviewTest renders the real screens on the JVM; no emulator or school account needed.
             isIncludeAndroidResources = true
             all { test ->
+                // Use Maven Central's supported HTTPS endpoint for Robolectric's runtime SDK fetch.
+                // Keep dependency-download errors visible in CI instead of only classMethod summaries.
+                test.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+                test.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
                 // Design previews render frames on the JVM; leave them out of ordinary runs and CI entirely.
                 if (!providers.gradleProperty("gxzPreview").isPresent && !providers.gradleProperty("gxzMotion").isPresent) {
                     test.exclude("**/DesignPreviewTest*", "**/MotionPreviewTest*")
