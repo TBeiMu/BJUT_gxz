@@ -18,6 +18,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
+
+private const val ACADEMIC_QUERY_TIMEOUT_MS = 90_000L
 
 data class AcademicUndo(val token: String)
 data class AcademicUiState(
@@ -29,6 +32,7 @@ data class AcademicUiState(
     val request: AcademicRequest? = null, val loginDraft: AcademicLoginDraft? = null,
     val pendingIdentity: AcademicIdentity? = null, val credentialBusy: Boolean = false,
     val rememberedAccount: String? = null, val credentialMessage: String? = null,
+    val committing: Boolean = false,
 ) {
     override fun toString() = "AcademicUiState(loading=$loading, busy=$busy, blocked=$blocked)"
 }
@@ -51,12 +55,14 @@ class AcademicController(
     val state = mutable.asStateFlow()
     @Volatile private var foreground = false
     private var monitor: Job? = null
+    private var reloadJob: Job? = null
     @Volatile private var connection: AcademicConnection? = null
     @Volatile private var task: Task? = null
     private var undoState: UndoState? = null
     @Volatile private var credentialEpoch = 0L
+    private enum class QueryStage { CANCELLABLE, COMMITTING, CANCELLED }
     private class Task(val connection: String, val session: AcademicSession, val request: AcademicRequest, val revision: Long) {
-        @Volatile var invalid = false
+        val stage = AtomicReference(QueryStage.CANCELLABLE)
         var job: Job? = null
         val cleanup = Mutex()
         var cleaned = false
@@ -67,25 +73,35 @@ class AcademicController(
     private class UndoState(val token: String, val before: AcademicData, val after: AcademicData, var deadline: Long? = null)
 
     init {
-        scope.launch { repository.state.filterNotNull().collect { data -> mutable.update { it.copy(data = data) } } }
+        scope.launch {
+            repository.state.filterNotNull().collect {
+                mutable.update { ui ->
+                    val latest = repository.state.value
+                    if (ui.committing || latest == null) ui else ui.copy(data = latest)
+                }
+            }
+        }
         reload()
     }
 
     fun reload() {
-        if (task != null || state.value.busy || state.value.saving || state.value.credentialBusy) return
+        if (task != null || state.value.busy || state.value.saving || state.value.credentialBusy || reloadJob?.isActive == true) return
         dismissUndo()
         mutable.update { it.copy(loading = true, message = null) }
-        scope.launch {
-            try {
-                val data = withContext(io) { repository.load() }
-                try {
-                    val account = withContext(io) { credentials?.load()?.username }
-                    mutable.update { it.copy(rememberedAccount = account, credentialMessage = null) }
-                } catch (e: CancellationException) { throw e }
-                catch (_: Exception) { mutable.update { it.copy(credentialMessage = "记住的密码暂不可用，可手动登录或清除后重试") } }
-                mutable.update { it.copy(data = data, loading = false, blocked = false) }
+        reloadJob = scope.launch {
+            val data = try {
+                withContext(io) { repository.load() }
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { mutable.update { it.copy(loading = false, blocked = true, message = AcademicProblem.STORAGE.hint) } }
+            catch (_: Exception) { null }
+            try {
+                val account = withContext(io) { credentials?.load()?.username }
+                mutable.update { it.copy(rememberedAccount = account, credentialMessage = null) }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                mutable.update { it.copy(rememberedAccount = null, credentialMessage = "记住的密码暂不可用，可手动登录或清除后重试") }
+            }
+            mutable.update { it.copy(data = data ?: it.data, loading = false, blocked = data == null,
+                message = if (data == null) AcademicProblem.STORAGE.hint else null) }
         }
     }
 
@@ -112,7 +128,7 @@ class AcademicController(
         connection = next
         mutable.update { it.copy(networkAvailable = next != null, networkLabel = next?.title) }
     }
-    private fun live(t: Task) = task === t && !t.invalid && foreground && connection?.identity == t.connection
+    private fun live(t: Task) = task === t && t.stage.get() == QueryStage.CANCELLABLE && foreground && connection?.identity == t.connection
     private fun requireLive(t: Task) { if (!live(t)) throw CancellationException("教务任务已取消") }
 
     fun start(target: AcademicQueryTarget = AcademicQueryTarget.EXAMS, intent: AcademicQueryIntent = AcademicQueryIntent.IMPORT) {
@@ -139,7 +155,7 @@ class AcademicController(
             val remembered = t.remembered?.takeIf { it.matches(username) }
             mutable.update { it.copy(loginDraft = AcademicLoginDraft(username, remembered?.password.orEmpty(),
                 rememberPassword = remembered != null), rememberedAccount = t.remembered?.username) }
-            val page = t.session.open()
+            val page = withTimeout(ACADEMIC_QUERY_TIMEOUT_MS) { t.session.open() }
             requireLive(t)
             mutable.update { it.copy(login = page, busy = false) }
         }
@@ -159,7 +175,7 @@ class AcademicController(
     }
 
     fun forgetPassword() {
-        if (state.value.busy || state.value.saving || state.value.credentialBusy) return
+        if (state.value.loading || state.value.busy || state.value.saving || state.value.credentialBusy) return
         val epoch = ++credentialEpoch
         val t = task
         val remembered = t?.remembered
@@ -169,7 +185,8 @@ class AcademicController(
         scope.launch {
             try {
                 withContext(io) { credentials?.clear { credentialEpoch == epoch } }
-                if (credentialEpoch == epoch) mutable.update { it.copy(rememberedAccount = null, credentialMessage = null) }
+                if (credentialEpoch == epoch) mutable.update { it.copy(rememberedAccount = null, credentialMessage = null,
+                    message = if (it.blocked) "已清除记住的教务密码" else it.message) }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
                 if (t != null && live(t)) t.remembered = remembered
@@ -186,61 +203,80 @@ class AcademicController(
         t.submitted = AcademicLoginDraft(username.trim(), password, captcha.trim(), state.value.loginDraft?.rememberPassword == true)
         mutable.update { it.copy(busy = true, message = null) }
         phase(t, keepSession = true) {
-            val identity = t.session.submit(token, username.trim(), password, captcha.trim())
-            requireLive(t)
-            t.identity = identity
-            mutable.update { it.copy(login = null, loginDraft = null) }
-            if (state.value.data.identity?.studentId?.let { it != identity.studentId } == true)
-                mutable.update { it.copy(pendingIdentity = identity, busy = false) }
-            else query(t, allowAccountChange = false)
+            val result = withTimeout(ACADEMIC_QUERY_TIMEOUT_MS) {
+                val identity = t.session.submit(token, username.trim(), password, captcha.trim())
+                requireLive(t)
+                t.identity = identity
+                if (state.value.data.identity?.studentId?.let { it != identity.studentId } == true) {
+                    mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = identity, busy = false) }
+                    null
+                } else {
+                    fetchQueryResult(t)
+                }
+            }
+            if (result != null) commitQuery(t, result, allowAccountChange = false)
         }
     }
 
     fun confirmAccountChange() {
         val t = task ?: return
-        if (!live(t) || state.value.busy || state.value.pendingIdentity == null) return
+        if (!live(t) || state.value.busy || state.value.credentialBusy || state.value.pendingIdentity == null) return
         mutable.update { it.copy(busy = true, pendingIdentity = null) }
-        phase(t) { query(t, allowAccountChange = true) }
+        phase(t) {
+            val result = withTimeout(ACADEMIC_QUERY_TIMEOUT_MS) { fetchQueryResult(t) }
+            commitQuery(t, result, allowAccountChange = true)
+        }
     }
 
-    private suspend fun query(t: Task, allowAccountChange: Boolean) {
-        val identity = t.identity ?: throw AcademicException(AcademicProblem.IDENTITY)
-        val draft = t.submitted ?: throw AcademicException(AcademicProblem.LOGIN)
+    private suspend fun fetchQueryResult(t: Task): AcademicQueryResult {
+        requireLive(t)
         mutable.update { it.copy(busy = true, login = null, loginDraft = null, pendingIdentity = null,
             examMessage = if (t.request.target == AcademicQueryTarget.EXAMS) "正在查询" else it.examMessage,
             gradeMessage = if (t.request.target == AcademicQueryTarget.GRADES) "正在查询" else it.gradeMessage) }
-        val result = when (t.request.target) {
+        return when (t.request.target) {
             AcademicQueryTarget.EXAMS -> AcademicQueryResult.Exams(t.session.exams(), now())
             AcademicQueryTarget.GRADES -> AcademicQueryResult.Grades(t.session.grades(now()))
         }
+    }
+
+    private suspend fun commitQuery(t: Task, result: AcademicQueryResult, allowAccountChange: Boolean) {
         requireLive(t)
-        val after = withContext(io) { repository.commitQuery(identity, result, t.revision, allowAccountChange) { live(t) } }
-        requireLive(t)
-        mutable.update { it.copy(data = after) }
-        val epoch = credentialEpoch
+        val identity = t.identity ?: throw AcademicException(AcademicProblem.IDENTITY)
+        val draft = t.submitted ?: throw AcademicException(AcademicProblem.LOGIN)
+        val after = withContext(io) {
+            repository.commitQuery(identity, result, t.revision, allowAccountChange, beginCommit = {
+                // Cancellation and publication of the encrypted snapshot share this decision.
+                if (!t.stage.compareAndSet(QueryStage.CANCELLABLE, QueryStage.COMMITTING)) {
+                    throw CancellationException("教务任务已取消")
+                }
+                mutable.update { it.copy(committing = true) }
+            }) { live(t) }
+        }
+        mutable.update { it.copy(data = after,
+            message = "${t.request.target.title}${if (t.request.intent == AcademicQueryIntent.IMPORT) "导入" else "刷新"}成功",
+            examMessage = if (t.request.target == AcademicQueryTarget.EXAMS) "更新成功" else if (allowAccountChange) null else it.examMessage,
+            gradeMessage = if (t.request.target == AcademicQueryTarget.GRADES) "更新成功" else if (allowAccountChange) null else it.gradeMessage) }
         try {
             if (draft.rememberPassword && credentials != null) {
-                withContext(io) { credentials.save(AcademicCredentials(identity.studentId, draft.username, draft.password)) { live(t) && credentialEpoch == epoch } }
-                requireLive(t)
+                withContext(io) { credentials.save(AcademicCredentials(identity.studentId, draft.username, draft.password)) }
                 mutable.update { it.copy(rememberedAccount = draft.username) }
             } else if (allowAccountChange) {
-                withContext(io) { credentials?.clear { live(t) && credentialEpoch == epoch } }
-                requireLive(t)
+                withContext(io) { credentials?.clear() }
                 mutable.update { it.copy(rememberedAccount = null) }
             }
         } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { if (live(t)) mutable.update { it.copy(credentialMessage = "资料已更新，密码设置未能保存，请重试") } }
-        requireLive(t)
-        mutable.update { it.copy(message = "${t.request.target.title}${if (t.request.intent == AcademicQueryIntent.IMPORT) "导入" else "刷新"}成功",
-            examMessage = if (t.request.target == AcademicQueryTarget.EXAMS) "更新成功" else if (allowAccountChange) null else it.examMessage,
-            gradeMessage = if (t.request.target == AcademicQueryTarget.GRADES) "更新成功" else if (allowAccountChange) null else it.gradeMessage) }
+        catch (_: Exception) {
+            val hint = if (draft.rememberPassword) "教务密码未能保存，请重试"
+                else "原教务密码未能清除，请在教务账号中重试"
+            mutable.update { it.copy(credentialMessage = hint) }
+        }
     }
     fun refreshCaptcha(token: String) {
         val t = task ?: return
         if (!live(t) || state.value.busy || state.value.credentialBusy || state.value.login?.token != token) return
         mutable.update { it.copy(busy = true, message = null) }
         phase(t, keepSession = true) {
-            val page = t.session.refreshCaptcha(token)
+            val page = withTimeout(ACADEMIC_QUERY_TIMEOUT_MS) { t.session.refreshCaptcha(token) }
             requireLive(t)
             mutable.update { it.copy(login = page, busy = false, loginDraft = it.loginDraft?.copy(captcha = "")) }
         }
@@ -249,7 +285,7 @@ class AcademicController(
         t.job = scope.launch {
             var keep = false
             try {
-                withTimeout(90_000) { block() }
+                block()
                 keep = keepSession && live(t) && (state.value.login != null || state.value.pendingIdentity != null)
             } catch (_: TimeoutCancellationException) {
                 fail(t, "查询超时，原有资料保留，请重试")
@@ -262,14 +298,22 @@ class AcademicController(
         }
     }
     private fun fail(t: Task, hint: String, blocked: Boolean = false) {
-        if (live(t)) mutable.update { it.copy(message = hint, blocked = it.blocked || blocked,
-            examMessage = if (t.request.target == AcademicQueryTarget.EXAMS) "查询失败" else it.examMessage,
-            gradeMessage = if (t.request.target == AcademicQueryTarget.GRADES) "查询失败" else it.gradeMessage) }
+        if (live(t) || (task === t && t.stage.get() == QueryStage.COMMITTING)) {
+            mutable.update { it.copy(message = hint, blocked = it.blocked || blocked,
+                examMessage = if (t.request.target == AcademicQueryTarget.EXAMS) "查询失败" else it.examMessage,
+                gradeMessage = if (t.request.target == AcademicQueryTarget.GRADES) "查询失败" else it.gradeMessage) }
+        }
     }
     fun cancel() = cancel(null)
     private fun cancel(message: String?) {
         val t = task ?: return
-        t.invalid = true
+        if (!t.stage.compareAndSet(QueryStage.CANCELLABLE, QueryStage.CANCELLED)) {
+            if (t.stage.get() == QueryStage.CANCELLED) {
+                val job = t.job
+                scope.launch { job?.join(); finish(t) }
+            }
+            return
+        }
         val job = t.job
         t.submitted = null; t.remembered = null
         mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = null, busy = true, message = message ?: it.message,
@@ -286,12 +330,18 @@ class AcademicController(
                 t.session.close()
                 try { t.session.awaitClosed() } catch (_: Exception) {
                     // Unknown cleanup status cannot authorize another session. Cancel can retry cleanup.
-                    if (task === t) mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = null, busy = true, message = "请求清理尚未完成，请稍后取消后重试") }
+                    t.stage.set(QueryStage.CANCELLED)
+                    if (task === t) mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = null,
+                        busy = true, committing = false, message = "请求清理尚未完成，请稍后取消后重试") }
                     return@withLock
                 }
                 t.cleaned = true
                 t.remembered = null; t.submitted = null; t.identity = null
-                if (task === t) { task = null; mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = null, request = null, busy = false) } }
+                if (task === t) {
+                    task = null
+                    mutable.update { it.copy(login = null, loginDraft = null, pendingIdentity = null,
+                        request = null, busy = false, committing = false) }
+                }
             }
         }
     }

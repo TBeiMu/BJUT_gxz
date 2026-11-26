@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -24,8 +25,17 @@ class AcademicControllerTest {
         var bytes: ByteArray? = null
         var failWrite = false
         var failClear = false
-        override fun read() = bytes?.clone()
-        override fun write(bytes: ByteArray) { if (failWrite) error("Fictional write failure"); this.bytes = bytes.clone() }
+        var beforeRead: () -> Unit = {}
+        var beforeWrite: () -> Unit = {}
+        override fun read(): ByteArray? {
+            beforeRead()
+            return bytes?.clone()
+        }
+        override fun write(bytes: ByteArray) {
+            beforeWrite()
+            if (failWrite) error("Fictional write failure")
+            this.bytes = bytes.clone()
+        }
         override fun clear() { if (failClear) error("Fictional clear failure"); bytes = null }
     }
     private class Session : AcademicSession {
@@ -213,6 +223,101 @@ class AcademicControllerTest {
         assertFalse(f.controller.state.value.busy)
     }
 
+    @Test fun cancellingBeforeAtomicAccountChangeKeepsOldSchoolDataAndPassword() = runTest {
+        val f = Fixture(this)
+        runCurrent()
+        f.start()
+        runCurrent()
+        f.submit()
+        runCurrent()
+        val before = f.controller.state.value.data
+        val oldPassword = AcademicCredentials("fictional-2026", "fictional-2026", "old-fictional-password")
+        f.credentials.save(oldPassword)
+        f.session.identity = AcademicIdentity("fictional-other")
+        f.start(AcademicQueryTarget.GRADES)
+        runCurrent()
+        f.controller.submit("fictional-token", "fictional-other", "new-fictional-password", "test")
+        runCurrent()
+        var diskReads = 0
+        f.store.beforeRead = {
+            if (++diskReads == 2) f.controller.cancel() // During the final disk recheck.
+        }
+        f.controller.confirmAccountChange()
+        runCurrent()
+        assertEquals(2, diskReads)
+        assertEquals(before, f.repository.load())
+        assertEquals(oldPassword, f.credentials.load())
+        assertFalse(f.controller.state.value.busy)
+        assertFalse(f.controller.state.value.committing)
+        assertNull(f.controller.state.value.gradeMessage)
+    }
+
+    @Test fun lateCancellationCannotInterruptAccountChangeOrItsRememberedPassword() = runTest {
+        val f = Fixture(this)
+        runCurrent()
+        f.controller.saveExam(null, ExamFields("自定义示例"), 0)
+        runCurrent()
+        f.start()
+        runCurrent()
+        f.submit()
+        runCurrent()
+        f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "old-fictional-password"))
+        f.session.identity = AcademicIdentity("fictional-other")
+        f.defaultUsername = "fictional-other"
+        f.start(AcademicQueryTarget.GRADES)
+        runCurrent()
+        f.controller.updateLoginDraft(f.controller.state.value.loginDraft!!.copy(rememberPassword = true))
+        f.controller.submit("fictional-token", "fictional-other", "new-fictional-password", "test")
+        runCurrent()
+        var writes = 0
+        f.store.beforeWrite = {
+            assertTrue(f.controller.state.value.committing)
+            f.controller.cancel()
+            writes++
+        }
+        f.credentialStore.beforeWrite = {
+            assertTrue(f.controller.state.value.committing)
+            assertEquals("成绩导入成功", f.controller.state.value.message)
+            f.controller.cancel()
+            f.controller.leaveForeground()
+            writes++
+        }
+        f.controller.confirmAccountChange()
+        runCurrent()
+
+        val after = f.repository.load()
+        assertEquals(2, writes)
+        assertEquals(f.session.identity, after.identity)
+        assertEquals("优秀", after.grades!!.degree.single().grade)
+        assertEquals("自定义示例", after.exams.single { it.original == null }.fields.name)
+        assertEquals(1, after.exams.size)
+        assertEquals(AcademicCredentials("fictional-other", "fictional-other", "new-fictional-password"), f.credentials.load())
+        assertEquals("成绩导入成功", f.controller.state.value.message)
+        assertFalse(f.controller.state.value.busy)
+        assertFalse(f.controller.state.value.committing)
+    }
+
+    @Test fun queryTimeoutKeepsThePreviousSnapshotAndSkipsLocalCommit() = runTest {
+        val f = Fixture(this)
+        runCurrent()
+        f.start()
+        runCurrent()
+        f.submit()
+        runCurrent()
+        val before = f.controller.state.value.data
+        f.session.examWaiting = CompletableDeferred()
+        f.start()
+        runCurrent()
+        f.submit()
+        runCurrent()
+        advanceTimeBy(90_001)
+        f.session.examWaiting!!.complete(Unit)
+        runCurrent()
+        assertEquals(before, f.repository.load())
+        assertEquals("查询超时，原有资料保留，请重试", f.controller.state.value.message)
+        assertFalse(f.controller.state.value.committing)
+    }
+
     @Test fun defaultsFollowTheCurrentCampusUsernameWithoutCampusPasswordAndDraftSurvivesCaptchaRefresh() = runTest {
         val f = Fixture(this); runCurrent(); f.start(); runCurrent()
         assertEquals(AcademicLoginDraft(), f.controller.state.value.loginDraft)
@@ -262,7 +367,8 @@ class AcademicControllerTest {
         f.credentialStore.failWrite = true; f.submit(); runCurrent()
         assertNotNull(f.controller.state.value.data.examUpdatedAt)
         assertFalse(f.controller.state.value.blocked)
-        assertNotNull(f.controller.state.value.credentialMessage)
+        assertEquals("考试导入成功", f.controller.state.value.message)
+        assertEquals("教务密码未能保存，请重试", f.controller.state.value.credentialMessage)
         assertNull(f.credentials.load())
         f.credentialStore.failWrite = false
         f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "remembered-secret"))
@@ -290,6 +396,29 @@ class AcademicControllerTest {
         assertFalse(f.controller.state.value.blocked); assertNotNull(f.controller.state.value.credentialMessage)
         assertArrayEquals(damaged, f.credentialStore.bytes)
         f.controller.forgetPassword(); runCurrent(); assertNull(f.credentialStore.bytes)
+    }
+
+    @Test fun blockedAcademicStorageStillLetsTheUserClearTheIndependentPassword() = runTest {
+        val f = Fixture(this)
+        val damaged = byteArrayOf(42)
+        f.store.bytes = damaged.clone()
+        f.credentials.save(AcademicCredentials("fictional-2026", "fictional-2026", "remembered-secret"))
+        runCurrent()
+        assertTrue(f.controller.state.value.blocked)
+        assertEquals("fictional-2026", f.controller.state.value.rememberedAccount)
+        f.credentialStore.failClear = true
+        f.controller.forgetPassword()
+        runCurrent()
+        assertNotNull(f.credentials.load())
+        assertEquals("密码未能清除，请重试", f.controller.state.value.credentialMessage)
+        f.credentialStore.failClear = false
+        f.controller.forgetPassword()
+        runCurrent()
+        assertNull(f.credentials.load())
+        assertNull(f.controller.state.value.rememberedAccount)
+        assertEquals("已清除记住的教务密码", f.controller.state.value.message)
+        assertTrue(f.controller.state.value.blocked)
+        assertArrayEquals(damaged, f.store.bytes)
     }
 
     @Test fun failedPasswordDeletionCannotClaimUnboundOrClearSchoolData() = runTest {

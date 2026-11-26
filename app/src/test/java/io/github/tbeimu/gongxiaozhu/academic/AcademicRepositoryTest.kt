@@ -168,6 +168,27 @@ class AcademicRepositoryTest {
         assertEquals("只修改这一条", refreshed.exams.single { it.id == editedId }.fields.note)
     }
 
+    @Test fun hiddenHistoricalCopyDoesNotHideOrPreventMatchingAReturningExam() = runBlocking {
+        val f = Fixture()
+        f.start(true)
+        val imported = f.repository.saveExams(identity, listOf(exam, exam), 1000)
+        val hiddenId = imported.exams.first().id
+        f.repository.deleteExam(hiddenId, imported.revision)
+        val missing = f.repository.saveExams(identity, emptyList(), 2000)
+        val hidden = missing.exams.single()
+        assertTrue(hidden.retained && hidden.hidden)
+
+        val returned = f.repository.saveExams(identity, listOf(exam), 3000)
+        val current = returned.exams.single { !it.retained }
+        assertFalse(current.hidden)
+        assertNotEquals(hiddenId, current.id)
+        assertEquals(hidden, returned.exams.single { it.retained })
+        val edited = f.repository.saveExam(current.id, current.fields.copy(note = "当前安排的备注"), returned.revision)
+        val refreshed = f.repository.saveExams(identity, listOf(exam), 4000, edited.revision)
+        assertEquals(edited.exams, refreshed.exams)
+        assertEquals(refreshed, f.repository.load())
+    }
+
     @Test fun courseCodeOrNameAloneNeverMergesDifferentExamOccurrences() = runBlocking {
         val f = Fixture(); f.start(true)
         val other = exam.copy(className = "另一个班", start = "2026-12-02 08:00", end = "2026-12-02 10:00")

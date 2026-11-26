@@ -119,18 +119,37 @@ internal object AcademicParser {
             if (target.length > 200 || argument.length > 100) fail()
             return AcademicPostBack(target, argument)
         }
-        links.firstOrNull { text(it) in setOf("下一页", "下页", ">", "›") }?.let { return action(it) }
-        val numbered = links.mapNotNull { a -> text(a).toIntOrNull()?.let { it to a } }
         val current = pager.select("span").mapNotNull { text(it).toIntOrNull() }.distinct().singleOrNull()
             ?: Regex("第\\s*(\\d+)\\s*页").find(text(pager))?.groupValues?.get(1)?.toIntOrNull()
+        fun adjacent(link: Element, nextPageNumber: Int?): AcademicPostBack {
+            val parsed = action(link)
+            if (parsed.argument.startsWith("Page\$") && parsed.argument != "Page\$Next") {
+                val requestedPage = parsed.argument.substringAfter('$').toIntOrNull()
+                if (requestedPage == null || requestedPage != nextPageNumber) fail()
+            }
+            return parsed
+        }
+        links.firstOrNull { text(it) in setOf("下一页", "下页", ">", "›") }?.let { return adjacent(it, current?.plus(1)) }
+        val numbered = links.mapNotNull { link -> text(link).toIntOrNull()?.let { it to link } }
         if (numbered.isNotEmpty()) {
             if (current == null) fail()
-            numbered.firstOrNull { it.first == current + 1 }?.let { return action(it.second) }
+            numbered.firstOrNull { it.first == current + 1 }?.let { return adjacent(it.second, it.first) }
             if (numbered.any { it.first > current }) fail()
         }
         val total = Regex("共\\s*(\\d+)\\s*页").find(text(pager))?.groupValues?.get(1)?.toIntOrNull()
-        if (total != null && (current == null || current < total)) fail()
-        if (links.any { text(it) !in setOf("首页", "上一页", "上页", "末页", "尾页", "<", "<<", ">>", "«", "»") && text(it).toIntOrNull() == null }) fail()
+        if (total != null && current != total) fail()
+        // A remaining forward link (including Last) does not establish that we reached the end.
+        val backwardLabels = setOf("首页", "上一页", "上页", "<", "<<", "«")
+        for (link in links) {
+            val label = text(link)
+            if (label.toIntOrNull() != null) continue
+            if (label !in backwardLabels) fail()
+            val argument = action(link).argument
+            if (argument.startsWith("Page\$") && argument !in setOf("Page\$First", "Page\$Prev")) {
+                val page = argument.substringAfter('$').toIntOrNull()
+                if (page == null || current == null || page !in 1 until current) fail()
+            }
+        }
         return null
     }
 

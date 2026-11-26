@@ -50,12 +50,13 @@ private fun normalizedExam(fields: ExamFields) = fields.copy(name = fields.name.
 
 @Composable
 internal fun AcademicExamEditor(record: ExamRecord?, revision: Long, saving: Boolean, editCompleted: Long, error: String?,
-    onDismiss: () -> Unit, onSave: (String?, ExamFields, Long) -> Unit) {
+    onDismiss: () -> Unit, onSave: (String?, ExamFields, Long) -> Unit, recordId: String? = record?.id,
+    storageBlocked: Boolean = false, loading: Boolean = false, onReload: () -> Unit = {}) {
     val original = record?.fields ?: ExamFields("")
     val baselineName = rememberSaveable { original.name }; val baselineStart = rememberSaveable { original.start }
     val baselineEnd = rememberSaveable { original.end }; val baselineLocation = rememberSaveable { original.location }
     val baselineNote = rememberSaveable { original.note }; val expectedRevision = rememberSaveable { revision }
-    val expectedId by rememberSaveable { mutableStateOf(record?.id) }
+    val expectedId = rememberSaveable { recordId.orEmpty() }.ifBlank { null }
     var completionAtOpen by rememberSaveable { mutableLongStateOf(editCompleted) }
     var name by rememberSaveable { mutableStateOf(original.name) }; var start by rememberSaveable { mutableStateOf(original.start) }
     var end by rememberSaveable { mutableStateOf(original.end) }; var location by rememberSaveable { mutableStateOf(original.location) }
@@ -84,11 +85,21 @@ internal fun AcademicExamEditor(record: ExamRecord?, revision: Long, saving: Boo
         DiscardChangesDialog(onContinue = { discard = false }, onDiscard = { if (!saving) onDismiss() })
         return
     }
-    AcademicEditorDialog(if (record == null) "添加自定义考试" else "编辑考试", saving,
-        valid = fields.name.isNotBlank() && invalidTime == null && (record == null || dirty), onDismiss = ::dismiss,
+    val validDraft = fields.name.isNotBlank() && invalidTime == null && (recordId == null || dirty)
+    AcademicEditorDialog(if (recordId == null) "添加自定义考试" else "编辑考试", saving,
+        valid = !loading && (storageBlocked || validDraft), onDismiss = ::dismiss,
         onOutsideTap = { if (!currentSaving && latestDraft() == baseline) close() }, onSave = {
-            if (revision != expectedRevision) staleSaveAttempted = true else onSave(expectedId, latestDraft(), expectedRevision)
-        }) {
+            when {
+                storageBlocked -> onReload()
+                revision != expectedRevision || (expectedId != null && record == null) -> staleSaveAttempted = true
+                else -> onSave(expectedId, latestDraft(), expectedRevision)
+            }
+        }, confirmLabel = if (storageBlocked) "重新读取" else "保存",
+        confirmTag = if (storageBlocked) "exam_reload" else "save_exam", loading = loading) {
+        if (storageBlocked) {
+            Text("草稿已保留。请重新读取教务资料。", color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("exam_storage_error"))
+        }
         OutlinedTextField(name, { name = it.take(300) }, Modifier.fillMaxWidth().testTag("exam_name"),
             enabled = !saving, label = { Text("考试名称") }, singleLine = true)
         OutlinedTextField(start, { start = it.take(32) }, Modifier.fillMaxWidth().testTag("exam_start"),
@@ -102,8 +113,12 @@ internal fun AcademicExamEditor(record: ExamRecord?, revision: Long, saving: Boo
         OutlinedTextField(note, { note = it.take(1000) }, Modifier.fillMaxWidth().testTag("exam_note"),
             enabled = !saving, label = { Text("备注（可选）") })
         if (record?.original != null) Text("修改仅保存在本机，不写回学校系统。", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
-        val saveError = if (staleSaveAttempted || error == "教务资料已变化，请重新操作" || error == "考试记录已变化，请重新打开编辑")
-            "教务资料已变化，请关闭后重新打开考试编辑" else error
+        val saveError = when {
+            storageBlocked -> null
+            staleSaveAttempted || error == "教务资料已变化，请重新操作" || error == "考试记录已变化，请重新打开编辑" ->
+                "教务资料已变化，请关闭后重新打开考试编辑"
+            else -> error
+        }
         saveError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("exam_save_error")) }
     }
 }

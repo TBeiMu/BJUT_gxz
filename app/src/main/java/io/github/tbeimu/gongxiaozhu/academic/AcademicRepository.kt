@@ -62,7 +62,8 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
 
     /** A confirmed account switch and its first complete result are one atomic vault write. */
     suspend fun commitQuery(identity: AcademicIdentity, result: AcademicQueryResult, expectedRevision: Long,
-        allowAccountChange: Boolean = false, isCurrent: () -> Boolean = { true }): AcademicData = locked {
+        allowAccountChange: Boolean = false, beginCommit: () -> Unit = {},
+        isCurrent: () -> Boolean = { true }): AcademicData = locked {
         guard(isCurrent)
         val current = requireCurrent(expectedRevision)
         val normalized = incoming { normalizeIdentity(identity).also(::validateIdentity) }
@@ -81,12 +82,12 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
             }
             is AcademicQueryResult.Grades -> base.copy(grades = incoming { normalizeGrades(result.snapshot).also(::validateGrades) })
         }
-        persist(next, isCurrent)
+        persist(next, isCurrent, beginCommit)
     }
 
     private fun mergeExams(current: AcademicData, originals: List<SchoolExam>): List<ExamRecord> {
         val oldSchool = current.exams.filter { it.original != null }
-        val oldGroups = oldSchool.groupBy { it.original!! }
+        val oldGroups = oldSchool.filterNot { it.retained }.groupBy { it.original!! }
         val newGroups = originals.groupingBy { it }.eachCount()
         val matched = mutableSetOf<String>()
         val refreshed = originals.map { original ->
@@ -157,7 +158,8 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
         persist(before.copy(revision = current.revision), isCurrent)
     }
 
-    private suspend fun persist(value: AcademicData, isCurrent: () -> Boolean = { true }): AcademicData {
+    private suspend fun persist(value: AcademicData, isCurrent: () -> Boolean = { true },
+        beginCommit: () -> Unit = {}): AcademicData {
         guard(isCurrent)
         val previous = requireCurrent()
         val candidate = value.copy(revision = previous.revision)
@@ -165,7 +167,11 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
             val disk = readDisk()
             if (existed) require(disk == previous) else require(disk == null)
         }
-        if (candidate == previous) return previous
+        if (candidate == previous) {
+            guard(isCurrent)
+            beginCommit()
+            return previous
+        }
         if (previous.revision == Long.MAX_VALUE) throw AcademicException(AcademicProblem.STORAGE)
         val next = candidate.copy(revision = previous.revision + 1)
         storage { validateData(next) }
@@ -182,6 +188,7 @@ class AcademicRepository(private val store: VaultStore, private val cipher: Vaul
                 if (existed) require(disk == previous) else require(disk == null)
             }
             guard(isCurrent)
+            beginCommit()
             storage { store.write(envelope) }
             existed = true
             mutable.value = next

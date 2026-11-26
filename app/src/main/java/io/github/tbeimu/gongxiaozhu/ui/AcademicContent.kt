@@ -95,18 +95,24 @@ internal fun AcademicContentBody(grades: Boolean, state: AcademicUiState, action
     ReportDialogVisibility(editing != null || selectedExam != null || selectedGrade != null || showAccount ||
         pendingAction != null || addMenu || termMenu, onDialogVisibilityChanged)
     LaunchedEffect(state.blocked, state.request) {
+        if (state.request != null) editing = null
         if (state.blocked || state.request != null) {
-            editing = null; selectedExam = null; selectedGrade = null; showAccount = false
+            selectedExam = null; selectedGrade = null; showAccount = false
             pendingAction = null; addMenu = false; termMenu = false
         }
     }
-    LaunchedEffect(data.revision, state.loading) {
+    LaunchedEffect(data.revision) {
         if (detailsRevision != data.revision) { selectedExam = null; selectedGrade = null }
-        if (!state.loading && editing != null && editing != NewExam && data.exams.none { it.id == editing }) editing = null
     }
-    val editRecord = data.exams.firstOrNull { it.id == editing }
-    if (editing != null && (editing == NewExam || editRecord != null)) key(editing) {
-        AcademicExamEditor(editRecord, data.revision, state.saving, state.editCompleted, state.message, { editing = null }, actions.saveExam)
+    val editorId = editing
+    if (editorId != null) {
+        key(editorId) {
+            val recordId = editorId.takeUnless { it == NewExam }
+            val record = data.exams.firstOrNull { it.id == recordId }
+            AcademicExamEditor(record, data.revision, state.saving, state.editCompleted, state.message,
+                { editing = null }, actions.saveExam, recordId = recordId, storageBlocked = state.blocked,
+                loading = state.loading, onReload = actions.reload)
+        }
     }
     if (pendingAction == null) {
         data.exams.firstOrNull { it.id == selectedExam }?.let { exam ->
@@ -162,8 +168,18 @@ internal fun AcademicContentBody(grades: Boolean, state: AcademicUiState, action
                 }
             } else if (state.blocked) item(key = "blocked") {
                 GlassCard {
+                    val canRecover = !state.busy && !state.saving && !state.credentialBusy
                     Text("教务资料暂不可用，原资料未被清除。", Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error)
-                    CtaButton("重新读取教务资料", actions.reload, enabled = !state.saving)
+                    CtaButton("重新读取教务资料", actions.reload, enabled = canRecover)
+                    state.credentialMessage?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (state.rememberedAccount != null || state.credentialMessage != null || state.credentialBusy) {
+                        TextButton(actions.forgetPassword, enabled = canRecover,
+                            modifier = Modifier.testTag("academic_forget_password")) {
+                            Text(if (state.credentialBusy) "正在清除密码" else "清除教务密码")
+                        }
+                    }
                 }
             } else {
                 item(key = "metadata") { AcademicMetadata(grades, state, now) }
@@ -234,7 +250,7 @@ private fun AcademicPageHeader(target: AcademicQueryTarget, state: AcademicUiSta
     val hasSnapshot = if (target == AcademicQueryTarget.EXAMS) state.data.examUpdatedAt != null else state.data.grades != null
     val operation: @Composable RowScope.() -> Unit = {
         val active = state.request?.takeIf { it.target == target }
-        val canCancel = state.request != null && state.login == null && state.pendingIdentity == null
+        val canCancel = state.request != null && state.login == null && state.pendingIdentity == null && !state.committing
         val cancelOnRefresh = canCancel && active?.intent == AcademicQueryIntent.IMPORT
         val cancelOnAdd = canCancel && !cancelOnRefresh
         Box(Modifier.size(48.dp).testTag("academic_refresh_slot")) {
@@ -305,7 +321,11 @@ private fun AcademicMetadata(grades: Boolean, state: AcademicUiState, now: Local
         listOf("更新成功", "查询失败", "查询中", "离线").maxOf { measurer.measure(it, style).size.width }.toDp()) } + 2.dp
     val dateText = updatedAt?.let { "更新于 ${academicUpdatedAt(it, now)}" } ?: "尚未导入"
     val text = when {
-        state.request?.target == target && state.busy -> "查询中"
+        state.request?.target == target && state.busy -> when {
+            !state.committing -> "查询中"
+            status == "正在查询" -> "保存中"
+            else -> status.orEmpty()
+        }
         !state.networkAvailable -> "离线"
         else -> status.orEmpty()
     }

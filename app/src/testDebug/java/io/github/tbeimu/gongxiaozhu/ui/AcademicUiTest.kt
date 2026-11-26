@@ -304,6 +304,57 @@ class AcademicUiTest {
         compose.onNodeWithText("清除", substring = false).assertDoesNotExist()
     }
 
+    @Test fun blockedGradesPageCanClearRememberedPasswordWithoutUnbindingOrReloading() {
+        var ui by mutableStateOf(AcademicUiState(loading = false, blocked = true, rememberedAccount = "fictional-account"))
+        var clears = 0
+        compose.setContent { GongXiaoZhuTheme {
+            AcademicContentBody(true, ui, AcademicActions(forgetPassword = {
+                clears++
+                ui = ui.copy(credentialBusy = true)
+            }), Modifier.fillMaxSize(), now)
+        } }
+        compose.onNodeWithTag("academic_forget_password").assertTextEquals("清除教务密码").performClick()
+        assertEquals(1, clears)
+        compose.onNodeWithTag("academic_forget_password").assertIsNotEnabled()
+        compose.onNodeWithText("重新读取教务资料").assertIsNotEnabled()
+        compose.runOnIdle { ui = ui.copy(credentialBusy = false, rememberedAccount = null) }
+        compose.onNodeWithTag("academic_forget_password").assertDoesNotExist()
+        compose.onNodeWithTag("academic_unbind").assertDoesNotExist()
+        compose.onNodeWithText("重新读取教务资料").assertIsEnabled()
+    }
+
+    @Test fun failedExamSaveRetainsDraftAcrossReloadAndRetriesAgainstItsOriginalRevision() {
+        val before = AcademicData(exams = listOf(record("retry")), revision = 11)
+        var ui by mutableStateOf(AcademicUiState(loading = false, data = before))
+        val attempts = mutableListOf<Triple<String?, ExamFields, Long>>()
+        val restore = StateRestorationTester(compose)
+        restore.setContent { GongXiaoZhuTheme {
+            AcademicContentBody(false, ui, AcademicActions(
+                reload = { ui = ui.copy(loading = true, message = null) },
+                saveExam = { id, fields, revision ->
+                    attempts += Triple(id, fields, revision)
+                    ui = if (attempts.size == 1) ui.copy(blocked = true, message = AcademicProblem.STORAGE.hint)
+                        else ui.copy(editCompleted = 1)
+                }
+            ), Modifier.fillMaxSize(), now)
+        } }
+        openExam("retry")
+        compose.onNodeWithTag("edit_exam_retry").performClick()
+        compose.onNodeWithTag("exam_note").performScrollTo().performTextInput("尚未保存的备注")
+        compose.onNodeWithTag("save_exam").performClick()
+        compose.onNodeWithTag("exam_storage_error").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("exam_reload").performClick()
+        compose.onNodeWithTag("exam_reload").assertIsNotEnabled()
+        compose.runOnIdle { ui = ui.copy(data = AcademicData()) }
+        restore.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("exam_note").performScrollTo().assertTextContains("尚未保存的备注")
+        compose.runOnIdle { ui = ui.copy(data = before, loading = false, blocked = false) }
+        compose.onNodeWithTag("save_exam").assertIsEnabled().performClick()
+        compose.onNodeWithTag("exam_editor").assertDoesNotExist()
+        assertEquals(2, attempts.size)
+        assertEquals(Triple("retry", before.exams.single().fields.copy(note = "尚未保存的备注"), 11L), attempts.last())
+    }
+
     @Test fun unchangedSchoolTimeTextCanBePreservedWhileEditingOtherFields() {
         val school = SchoolExam("fixture-unset", "示例未定考试", "示例教学班", "未定", "另行通知", "原地点")
         val exam = ExamRecord("school-unset", school, school.toExamFields())
@@ -427,10 +478,17 @@ class AcademicUiTest {
         compose.onNodeWithTag("academic_refresh_loading", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("academic_cancel_query").assertIsEnabled().performClick()
         assertEquals(1, cancellations)
+        compose.runOnIdle { ui = ui.copy(committing = true, examMessage = "正在查询") }
+        compose.onNodeWithTag("academic_cancel_query").assertDoesNotExist()
+        compose.onNodeWithTag("academic_add").assertIsNotEnabled()
+        compose.onNodeWithText("保存中").assertIsDisplayed()
+        compose.runOnIdle { ui = ui.copy(committing = true, examMessage = "更新成功") }
+        compose.onNodeWithText("更新成功").assertIsDisplayed()
+        compose.onNodeWithTag("academic_cancel_query").assertDoesNotExist()
         assertEquals(refresh, compose.onNodeWithTag("academic_refresh_slot").fetchSemanticsNode().boundsInRoot)
         assertEquals(add, compose.onNodeWithTag("academic_add_slot").fetchSemanticsNode().boundsInRoot)
         assertEquals(card, compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot)
-        compose.runOnIdle { ui = ui.copy(busy = false, request = null, examMessage = "更新成功") }
+        compose.runOnIdle { ui = ui.copy(busy = false, request = null, committing = false, examMessage = "更新成功") }
         assertEquals(card, compose.onNodeWithTag("exam_fixture-school").fetchSemanticsNode().boundsInRoot)
         compose.runOnIdle { ui = ui.copy(busy = true, request = AcademicRequest(AcademicQueryTarget.EXAMS, AcademicQueryIntent.IMPORT)) }
         compose.onNodeWithTag("academic_import_loading", useUnmergedTree = true).assertExists()

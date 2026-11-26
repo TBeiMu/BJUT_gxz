@@ -67,6 +67,35 @@ class AcademicParserTest {
         assertThrows(AcademicException::class.java) { AcademicParser.exams(AcademicParser.document(unknown)) }
     }
 
+    @Test fun lastPageLinkWithoutAnAdjacentPageFailsForBothTables() {
+        for (label in listOf("末页", "尾页", ">>", "»")) {
+            val link = """<a href="javascript:__doPostBack('ctl00${'$'}MainWork${'$'}dgData','Page${'$'}Last')">$label</a>"""
+            val exams = academicExamFixture(pager = "<tr><td colspan='6'><span>1</span>$link</td></tr>")
+            val grades = academicGradeFixture(degreePager = "<tr><td colspan='4'><span>1</span>$link</td></tr>")
+            assertEquals(AcademicProblem.RESPONSE, assertThrows(AcademicException::class.java) {
+                AcademicParser.exams(AcademicParser.document(exams))
+            }.problem)
+            assertEquals(AcademicProblem.RESPONSE, assertThrows(AcademicException::class.java) {
+                AcademicParser.grades(AcademicParser.document(grades), "MainWork_dgData")
+            }.problem)
+        }
+    }
+
+    @Test fun finalPageCanHaveBackwardLinksAndDisabledForwardLabels() {
+        val pager = """<tr><td colspan="4"><a href="javascript:__doPostBack('ctl00${'$'}MainWork${'$'}dgData','Page${'$'}Prev')">
+            上一页</a> <span>2</span> <span>末页</span></td></tr>"""
+        val doc = AcademicParser.document(academicGradeFixture(degreePager = pager))
+        assertNull(AcademicParser.grades(doc, "MainWork_dgData").next)
+    }
+
+    @Test fun aNextPageLabelCannotSkipIntermediateRecords() {
+        val pager = academicPager(6).replace("Page${'$'}2", "Page${'$'}Last").replace(">2</a>", ">下一页</a>")
+        val doc = AcademicParser.document(academicExamFixture(pager = pager))
+        assertEquals(AcademicProblem.RESPONSE, assertThrows(AcademicException::class.java) {
+            AcademicParser.exams(doc)
+        }.problem)
+    }
+
     @Test fun evaluationRestrictionInheritedFromRowIsNotLost() {
         val row = gradeRow(grade = "暂不可查看").replace("<tr>", "<tr style='color:Red;'>")
         val degree = AcademicParser.grades(AcademicParser.document(academicGradeFixture(row)), "MainWork_dgData").records.single()
