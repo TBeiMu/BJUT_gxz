@@ -449,13 +449,14 @@ private fun CardTransparencySettings(wallpaper: WallpaperState) {
                 style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = palette.ink)
         }
         GlassCard(padding = PaddingValues(16.dp), spacing = 10.dp) {
-            Text("数值越大，卡片越透明，透出的背景越明显。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
+            Text("数值越大，卡片越透明；100% 时卡片底色完全透明。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
             QuietSlider(value.toFloat(), { wallpaper.previewCardOpacity(100f - it) }, wallpaper.saveCardOpacity,
-                2f..16f, 6, !wallpaper.busy, "card_transparency_slider", "卡片通透度", "$value%")
+                (100 - MAX_CARD_OPACITY_PERCENT).toFloat()..(100 - MIN_CARD_OPACITY_PERCENT).toFloat(),
+                48, !wallpaper.busy, "card_transparency_slider", "卡片通透度", "$value%")
             SliderEndpoints("更清晰", "更通透")
             Spacer(Modifier.height(2.dp))
             BoxWithConstraints(Modifier.fillMaxWidth().selectableGroup()) {
-                val choices = listOf(2 to "清晰", 4 to "默认", 8 to "轻透")
+                val choices = listOf(4 to "默认", 20 to "轻透", 100 to "全透")
                 val expanded = (maxWidth - 16.dp) / 3 < (44f * LocalDensity.current.fontScale + 24f).dp
                 if (expanded) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     choices.forEach { (transparency, title) ->

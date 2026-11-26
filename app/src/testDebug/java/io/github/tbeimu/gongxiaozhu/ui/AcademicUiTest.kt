@@ -513,7 +513,7 @@ class AcademicUiTest {
         }
         val wallpaper = WallpaperState().apply {
             preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoName = WallpaperPreferences.LEGACY_PHOTO,
-                photoBlurDp = 12, themeMode = AppThemeMode.LIGHT, cardOpacityPercent = 84)
+                photoBlurDp = 12, themeMode = AppThemeMode.LIGHT, cardOpacityPercent = 0)
             image = bitmap.asImageBitmap()
         }
         var grades by mutableStateOf(false)

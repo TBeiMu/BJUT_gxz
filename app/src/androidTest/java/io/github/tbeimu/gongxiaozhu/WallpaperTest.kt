@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
@@ -166,9 +168,9 @@ class WallpaperTest {
             assertEquals(Color(0xFFFF6E52), observedTertiary)
         }
 
-        compose.onNodeWithTag("card_transparency_8").performScrollTo().performClick()
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 92 }
-        compose.runOnIdle { assertEquals(.92f, observedGlassAlpha, .002f) }
+        compose.onNodeWithTag("card_transparency_20").performScrollTo().performClick()
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 80 }
+        compose.runOnIdle { assertEquals(.8f, observedGlassAlpha, .002f) }
 
         compose.onNodeWithTag("appearance_combo_NIGHT").performScrollTo().performClick()
         compose.waitUntil(5000) { !state.busy && store.loadPreferences().accentPreset == AccentPreset.GREEN }
@@ -230,8 +232,8 @@ class WallpaperTest {
         compose.waitUntil(5000) { !state.busy && store.loadPreferences().accentPreset == AccentPreset.VIOLET }
         compose.onNodeWithTag("accent_VIOLET").assertIsSelected()
         preview("appearance-large-text-dark-accent")
-        compose.onNodeWithTag("card_transparency_8").performScrollTo().assertIsDisplayed().performClick()
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 92 }
+        compose.onNodeWithTag("card_transparency_20").performScrollTo().assertIsDisplayed().performClick()
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 80 }
         preview("appearance-large-text-transparency")
         compose.onNodeWithTag("appearance_combo_SKY").performScrollTo().assertIsDisplayed().performClick()
         compose.waitUntil(5000) { !state.busy && store.loadPreferences().themeMode == AppThemeMode.LIGHT }
@@ -248,10 +250,10 @@ class WallpaperTest {
         // Material adds an accessibility margin around the slider. Gesture coordinates
         // come from the painted track, rather than that expanded semantics rectangle.
         track.performTouchInput { click(centerRight) }
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 84 }
-        compose.onNodeWithTag("card_transparency_value").assertTextEquals("16%")
-        slider.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "16%"))
-        compose.runOnIdle { assertEquals(.84f, observedGlassAlpha, .002f) }
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 0 }
+        compose.onNodeWithTag("card_transparency_value").assertTextEquals("100%")
+        slider.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "100%"))
+        compose.runOnIdle { assertEquals(0f, observedGlassAlpha, .002f) }
         assertEquals(track.fetchSemanticsNode().boundsInRoot.right,
             thumb.fetchSemanticsNode().boundsInRoot.center.x, 1.5f)
         preview("appearance-refined-touch-right")
@@ -262,11 +264,30 @@ class WallpaperTest {
         compose.runOnIdle { assertEquals(.98f, observedGlassAlpha, .002f) }
         assertEquals(track.fetchSemanticsNode().boundsInRoot.left,
             thumb.fetchSemanticsNode().boundsInRoot.center.x, 1.5f)
-        track.performTouchInput { swipe(centerLeft, centerRight, durationMillis = 300) }
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 84 }
-        slider.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(8f) }
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 92 }
-        compose.onNodeWithTag("card_transparency_8").assertIsSelected()
+        val sliderBounds = slider.fetchSemanticsNode().boundsInRoot
+        val thumbCenter = thumb.fetchSemanticsNode().boundsInRoot.center - sliderBounds.topLeft
+        // A real drag may continue past the last painted tick; include its thumb radius.
+        val dragEnd = androidx.compose.ui.geometry.Offset(
+            track.fetchSemanticsNode().boundsInRoot.right - sliderBounds.left +
+                thumb.fetchSemanticsNode().boundsInRoot.width / 2, thumbCenter.y)
+        slider.performTouchInput { swipe(thumbCenter, dragEnd, durationMillis = 300) }
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 0 }
+        val previousState = state
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(5000) { state !== previousState && !state.busy }
+        compose.runOnIdle { assertEquals(0f, observedGlassAlpha, .002f) }
+        compose.onNodeWithTag("card_transparency_100").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("card_transparency_slider").performScrollTo()
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(20f) }
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 80 }
+        compose.onNodeWithTag("card_transparency_20").assertIsSelected()
+        compose.onNodeWithTag("card_transparency_100").performScrollTo().assertIsDisplayed().performClick()
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 0 }
+        compose.onNodeWithTag("card_transparency_100").assertIsSelected()
+        compose.onNodeWithTag("card_transparency_slider").performScrollTo()
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(50f) }
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 50 }
+        compose.onNodeWithTag("card_transparency_value").assertTextEquals("50%")
     }
 
     @Test fun refinedGroupsRemainOperableAtDoubleFontScale() {
@@ -293,6 +314,10 @@ class WallpaperTest {
         compose.onNodeWithTag("card_transparency_4").performScrollTo().assertIsDisplayed().performClick()
         compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 96 }
         preview("appearance-refined-double-font-cards")
+        compose.onNodeWithTag("card_transparency_100").performScrollTo().assertIsDisplayed().performClick()
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 0 }
+        compose.onNodeWithTag("card_transparency_100").assertIsSelected()
+        preview("appearance-refined-double-font-100")
         compose.onNodeWithTag("wallpaper_restore").performScrollTo().assertIsDisplayed().performClick()
         compose.waitUntil(5000) { !state.busy }
         assertEquals(WallpaperPreferences(), store.loadPreferences())
@@ -323,6 +348,10 @@ class WallpaperTest {
             compose.onNodeWithTag("accent_BLUE").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(5000) { !state.busy && store.loadPreferences().accentPreset == AccentPreset.BLUE }
             preview("appearance-refined-landscape-double-font-colors")
+            compose.onNodeWithTag("card_transparency_100").performScrollTo().assertIsDisplayed().performClick()
+            compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 0 }
+            compose.onNodeWithTag("card_transparency_100").assertIsSelected()
+            preview("appearance-refined-landscape-double-font-100")
         } finally {
             assertTrue(automation.setRotation(UiAutomation.ROTATION_FREEZE_0))
             compose.waitUntil(10000) {
@@ -455,6 +484,59 @@ class WallpaperTest {
         assertTrue("Foreground pixels must not be blurred", foreground.sameAs(
             compose.onNodeWithTag("foreground").captureToImage().asAndroidBitmap()))
         preview("wallpaper-photo-blur")
+    }
+
+    @Test fun maximumTransparencyRevealsMoreWallpaperWhileTextStaysOpaque() {
+        val bitmap = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply {
+            val canvas = android.graphics.Canvas(this)
+            canvas.drawColor(android.graphics.Color.rgb(20, 55, 100))
+            canvas.drawRect(100f, 0f, 200f, 400f, android.graphics.Paint().apply {
+                color = android.graphics.Color.rgb(245, 205, 125)
+            })
+        }
+        val local = WallpaperState().apply {
+            image = bitmap.asImageBitmap()
+            preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoBlurDp = 0,
+                photoName = "wallpaper.jpg", themeMode = AppThemeMode.LIGHT, cardOpacityPercent = 84)
+        }
+        compose.runOnUiThread { WallpaperTestActivity.scene = { GongXiaoZhuTheme(local.preferences) {
+            AppBackdrop(local) {
+                val palette = gxz
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.padding(24.dp).fillMaxWidth().glass(palette)
+                        .testTag("transparency_sample").padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("考试与成绩", Modifier.fillMaxWidth(), color = palette.ink)
+                        Text("背景更通透，文字保持清晰", Modifier.fillMaxWidth(), color = palette.inkSoft)
+                        Spacer(Modifier.height(72.dp))
+                    }
+                }
+            }
+        } } }
+        fun wallpaperDifference(): Float {
+            val pixels = compose.onNodeWithTag("transparency_sample").captureToImage().toPixelMap()
+            val y = (pixels.height * .8f).toInt()
+            return abs(pixels[(pixels.width * .25f).toInt(), y].luminance() -
+                pixels[(pixels.width * .75f).toInt(), y].luminance())
+        }
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
+            compose.runOnIdle { local.preferences = local.preferences.copy(themeMode = mode, cardOpacityPercent = 84) }
+            val previous = wallpaperDifference()
+            preview("transparency-${mode.name}-16")
+            compose.runOnIdle { local.preferences = local.preferences.copy(cardOpacityPercent = 50) }
+            val atFifty = wallpaperDifference()
+            assertTrue("50% must reveal noticeably more wallpaper than 16%", atFifty > previous * 2f)
+            preview("transparency-${mode.name}-50")
+            compose.runOnIdle { local.preferences = local.preferences.copy(cardOpacityPercent = 0) }
+            assertTrue("100% must reveal more wallpaper than 50%", wallpaperDifference() > atFifty * 1.25f)
+            compose.onNodeWithText("背景更通透，文字保持清晰").assertIsDisplayed()
+                .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
+                    val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                    assertTrue(get(results)); assertFalse(results.single().hasVisualOverflow)
+                    assertEquals(1f, results.single().layoutInput.style.color.alpha, .001f)
+                }
+            preview("transparency-${mode.name}-100")
+        }
     }
 
     private fun preview(name: String) {

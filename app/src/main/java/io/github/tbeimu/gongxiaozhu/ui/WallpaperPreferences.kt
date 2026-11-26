@@ -4,6 +4,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+internal const val MIN_CARD_OPACITY_PERCENT = 0
+internal const val MAX_CARD_OPACITY_PERCENT = 98
+
 @Serializable
 internal enum class WallpaperMode(val title: String) {
     PRESET("颜色背景"), SYSTEM_COLORS("跟随壁纸颜色"), PHOTO("自选壁纸")
@@ -42,7 +45,8 @@ internal data class WallpaperPreferences(
     val cardOpacityPercent: Int = 96
 ) {
     fun validate(): WallpaperPreferences {
-        require(schemaVersion == 1 && photoBlurDp in 0..24 && cardOpacityPercent in 84..98)
+        require(schemaVersion == 1 && photoBlurDp in 0..24 &&
+            cardOpacityPercent in MIN_CARD_OPACITY_PERCENT..MAX_CARD_OPACITY_PERCENT)
         require(photoName == null || photoName == LEGACY_PHOTO || PHOTO_NAME.matches(photoName))
         require(mode != WallpaperMode.PHOTO || photoName != null)
         return this

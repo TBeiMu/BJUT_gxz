@@ -137,10 +137,11 @@ internal fun rememberWallpaper(): WallpaperState {
     state.previewBlur = { if (!state.busy) state.preferences = state.preferences.copy(photoBlurDp = it.roundToInt().coerceIn(0, 24)) }
     state.saveBlur = { commit(state.preferences) }
     state.previewCardOpacity = { if (!state.busy) state.preferences = state.preferences.copy(
-        cardOpacityPercent = it.roundToInt().coerceIn(84, 98)) }
+        cardOpacityPercent = it.roundToInt().coerceIn(MIN_CARD_OPACITY_PERCENT, MAX_CARD_OPACITY_PERCENT)) }
     state.saveCardOpacity = { commit(state.preferences) }
     state.applyAppearance = { mode, accent, opacity -> commit(saved.copy(
-        themeMode = mode, accentPreset = accent, cardOpacityPercent = opacity.coerceIn(84, 98))) }
+        themeMode = mode, accentPreset = accent,
+        cardOpacityPercent = opacity.coerceIn(MIN_CARD_OPACITY_PERCENT, MAX_CARD_OPACITY_PERCENT))) }
 
     LaunchedEffect(store) {
         val token = ++operation
@@ -259,7 +260,7 @@ internal fun WallpaperBackground(wallpaper: WallpaperState, modifier: Modifier =
                     renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Clamp) else null
                 }, contentScale = ContentScale.Crop)
             // A photo needs a firmer veil than a gradient to keep ink legible.
-            Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF0F1115).copy(alpha = .62f) else Color(0xFFF5F5F5).copy(alpha = .5f)))
+            Box(Modifier.fillMaxSize().background(wallpaperPhotoVeil(preferences.cardOpacityPercent, dark)))
         } else Canvas(Modifier.fillMaxSize()) {
             // A single, barely-there pool of the preset's tint at the top: light, not decoration.
             drawRect(Brush.radialGradient(listOf(colors[0].copy(alpha = if (dark) .5f else .9f), colors[0].copy(alpha = 0f)),

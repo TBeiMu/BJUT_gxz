@@ -1,9 +1,50 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.lerp
 import org.junit.Assert.*
 import org.junit.Test
 
 class WallpaperPreferencesTest {
+    @Test fun strongerTransparencyKeepsOldAppearanceAndSecondaryTextReadable() {
+        fun contrast(a: Color, b: Color): Float {
+            val first = a.luminance()
+            val second = b.luminance()
+            return (maxOf(first, second) + .05f) / (minOf(first, second) + .05f)
+        }
+        for (dark in listOf(false, true)) {
+            val original = appearancePalette(WallpaperPreferences(), dark)
+            for (opacity in 84..98) {
+                val legacy = appearancePalette(WallpaperPreferences(cardOpacityPercent = opacity), dark)
+                assertEquals(original.inkSoft, legacy.inkSoft)
+                // Compose stores sRGB alpha in 8 bits.
+                assertEquals(opacity / 100f, legacy.glass.alpha, .002f)
+            }
+            for (opacity in 50..83) {
+                val previous = appearancePalette(WallpaperPreferences(cardOpacityPercent = opacity), dark)
+                assertEquals(lerp(original.inkSoft, original.ink, (84 - opacity) / 34f * .3f), previous.inkSoft)
+            }
+            for (opacity in 50..98) {
+                val veil = if (dark) Color(0xFF0F1115).copy(alpha = .62f) else Color(0xFFF5F5F5).copy(alpha = .5f)
+                assertEquals(veil, wallpaperPhotoVeil(opacity, dark))
+            }
+            // Worst photo under each theme, including the wallpaper readability veil.
+            for (opacity in 0..83) {
+                val backdrop = wallpaperPhotoVeil(opacity, dark).compositeOver(if (dark) Color.White else Color.Black)
+                val palette = appearancePalette(WallpaperPreferences(cardOpacityPercent = opacity), dark)
+                val card = palette.glass.compositeOver(backdrop)
+                assertTrue("Primary ink must remain legible at $opacity% opacity", contrast(palette.ink, card) >= 4.5f)
+                assertTrue("Secondary ink must remain legible at $opacity% opacity", contrast(palette.inkSoft, card) >= 4.5f)
+                assertEquals(1f, palette.ink.alpha, .001f)
+                assertEquals(1f, palette.inkSoft.alpha, .001f)
+                assertEquals(original.glassStrong, palette.glassStrong)
+                assertEquals(original.accent, palette.accent)
+            }
+        }
+    }
+
     @Test fun migrationPreservesAnExistingPhotoWithoutAddingBlur() {
         val migrated = WallpaperPreferences.migrated(true)
         assertEquals(WallpaperMode.PHOTO, migrated.mode)
@@ -15,7 +56,7 @@ class WallpaperPreferencesTest {
     @Test fun allModesPresetsAndBlurLimitsRoundTrip() {
         for (mode in WallpaperMode.entries) for (preset in WallpaperPreset.entries)
             for (theme in AppThemeMode.entries) for (accent in AccentPreset.entries)
-                for (blur in listOf(0, 12, 24)) for (opacity in listOf(84, 92, 96, 98)) {
+                for (blur in listOf(0, 12, 24)) for (opacity in listOf(0, 2, 26, 50, 70, 80, 84, 92, 96, 98)) {
                     val preferences = WallpaperPreferences(mode = mode, preset = preset, photoBlurDp = blur,
                         photoName = "wallpaper-00000000-0000-0000-0000-000000000000.jpg",
                         themeMode = theme, accentPreset = accent, cardOpacityPercent = opacity)
@@ -55,7 +96,7 @@ class WallpaperPreferencesTest {
         }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(photoBlurDp = -1).validate() }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(photoBlurDp = 25).validate() }
-        for (opacity in listOf(83, 99)) assertThrows(IllegalArgumentException::class.java) {
+        for (opacity in listOf(-1, 99)) assertThrows(IllegalArgumentException::class.java) {
             WallpaperPreferences(cardOpacityPercent = opacity).validate()
         }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(schemaVersion = 2).validate() }

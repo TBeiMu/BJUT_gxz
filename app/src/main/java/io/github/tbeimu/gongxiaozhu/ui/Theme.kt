@@ -13,6 +13,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,7 +47,7 @@ internal data class GxzPalette(
 
 private val LightPalette = GxzPalette(
     dark = false,
-    // Neutral ink on paper. Glass opacity is user-adjustable within a narrow readable range.
+    // Neutral ink on paper; only card surfaces receive the chosen opacity.
     ink = Color(0xFF1B1D22), onInk = Color.White,
     inkSoft = Color(0xFF585D67), inkFaint = Color(0xFF8D919A),
     hairline = Color(0xFF1B1D22).copy(alpha = .07f),
@@ -180,8 +181,22 @@ internal fun appearancePalette(appearance: WallpaperPreferences, systemDark: Boo
     val dark = appearance.themeMode.isDark(systemDark)
     val base = if (dark) DarkPalette else LightPalette
     val (accent, onAccent) = accentColors(appearance.accentPreset, dark)
+    // Preserve the existing 2–50% appearance; reinforce ink further only beyond 50%.
+    val clearerInk = ((84 - appearance.cardOpacityPercent) / 34f).coerceIn(0f, 1f)
+    val secondaryStrength = clearerInk * .3f + extraCardTransparency(appearance.cardOpacityPercent) * .5f
     return base.copy(accent = accent, onAccent = onAccent,
+        inkSoft = lerp(base.inkSoft, base.ink, secondaryStrength),
         glass = base.glass.copy(alpha = appearance.cardOpacityPercent / 100f))
+}
+
+private fun extraCardTransparency(cardOpacityPercent: Int): Float =
+    ((50 - cardOpacityPercent) / 50f).coerceIn(0f, 1f)
+
+/** Shared by the real wallpaper and previews, including cards with no background fill. */
+internal fun wallpaperPhotoVeil(cardOpacityPercent: Int, dark: Boolean): Color {
+    val extra = extraCardTransparency(cardOpacityPercent)
+    return if (dark) Color(0xFF0F1115).copy(alpha = .62f + extra * .04f)
+        else Color(0xFFF5F5F5).copy(alpha = .5f + extra * .1f)
 }
 
 internal fun accentColors(preset: AccentPreset, dark: Boolean): Pair<Color, Color> = when (preset) {
