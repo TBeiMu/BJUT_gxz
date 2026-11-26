@@ -41,13 +41,15 @@ import androidx.compose.ui.unit.dp
 internal val CardShape = RoundedCornerShape(22.dp)
 internal val TileShape = RoundedCornerShape(18.dp)
 
-/** Frosted paper: a translucent fill with a lit top edge. No shadow, so it stays clean on any wallpaper. */
-internal fun Modifier.glass(palette: GxzPalette, shape: Shape = CardShape, strong: Boolean = false): Modifier =
-    // Solid paper lifted a hair off the page: a soft, wide shadow in light mode, a hairline in both.
-    (if (palette.dark) this else shadow(if (strong) 10.dp else 6.dp, shape, clip = false,
+/** Card decoration disappears entirely at full transparency; content and clipping remain. */
+internal fun Modifier.glass(palette: GxzPalette, shape: Shape = CardShape, strong: Boolean = false): Modifier {
+    // An elevation shadow can still tint a transparent card's interior around its content.
+    if (!strong && palette.glass.alpha == 0f) return clip(shape)
+    return (if (palette.dark) this else shadow(if (strong) 10.dp else 6.dp, shape, clip = false,
         ambientColor = Color(0x14000000), spotColor = Color(0x1A000000)))
         .clip(shape).background(if (strong) palette.glassStrong else palette.glass)
         .border(.7.dp, palette.glassEdge, shape)
+}
 
 @Composable
 internal fun GlassCard(modifier: Modifier = Modifier, shape: Shape = CardShape,

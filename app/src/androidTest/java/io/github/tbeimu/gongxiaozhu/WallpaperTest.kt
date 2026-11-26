@@ -539,6 +539,47 @@ class WallpaperTest {
         }
     }
 
+    @Test fun fullyTransparentCardsMatchBackdropAcrossPaddingAndContent() {
+        val decorate = androidx.compose.runtime.mutableStateOf(true)
+        val bitmap = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(20, 55, 100))
+            android.graphics.Canvas(this).drawRect(100f, 0f, 200f, 400f, android.graphics.Paint().apply {
+                color = android.graphics.Color.rgb(245, 205, 125)
+            })
+        }
+        val local = WallpaperState().apply {
+            image = bitmap.asImageBitmap()
+            preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoBlurDp = 0,
+                photoName = "wallpaper.jpg", themeMode = AppThemeMode.LIGHT, cardOpacityPercent = 0)
+        }
+        compose.runOnUiThread { WallpaperTestActivity.scene = { GongXiaoZhuTheme(local.preferences) {
+            AppBackdrop(local) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.padding(24.dp).fillMaxWidth()
+                        .then(if (decorate.value) Modifier.glass(gxz) else Modifier)
+                        .testTag("uniform_transparency_card").padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("考试与成绩", Modifier.fillMaxWidth(), color = gxz.ink)
+                        Text("只有文字与图标，背景统一透明", Modifier.fillMaxWidth(), color = gxz.inkSoft)
+                        Spacer(Modifier.height(72.dp))
+                    }
+                }
+            }
+        } } }
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
+            compose.runOnIdle { local.preferences = local.preferences.copy(themeMode = mode); decorate.value = false }
+            val reference = compose.onRoot().captureToImage().asAndroidBitmap()
+            compose.runOnIdle { decorate.value = true }
+            val actual = compose.onRoot().captureToImage().asAndroidBitmap()
+            preview("uniform-transparency-${mode.name}-100")
+            val bounds = compose.onNodeWithTag("uniform_transparency_card").fetchSemanticsNode().boundsInRoot
+            val centerX = (bounds.left + bounds.width * .25f).toInt()
+            val centerY = (bounds.top + bounds.height * .8f).toInt()
+            assertEquals("$mode card center must reveal the unchanged backdrop", reference.getPixel(centerX, centerY), actual.getPixel(centerX, centerY))
+            assertTrue("$mode full transparency must add no fill, border or shadow anywhere", reference.sameAs(actual))
+        }
+    }
+
     private fun preview(name: String) {
         context.getExternalFilesDir(null)?.resolve("$name.png")?.outputStream()?.use {
             compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
