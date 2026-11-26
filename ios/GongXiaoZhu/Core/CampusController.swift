@@ -65,6 +65,6 @@ extension AppState {
         } catch { notify(error); return false }
     }
     func deleteAccount(_ id: String) async { await waitAccountTasks(); do { accounts = try await accountStore.delete(id); billing = nil; await billingCache.clear(); await restoreBilling() } catch { notify(error) } }
-    func setDefault(_ id: String) async { await stopBilling(); do { accounts = try await accountStore.setDefault(id); billing = nil; await billingCache.clear() } catch { notify(error) } }
-    func saveSettings(_ settings: CampusSettings) async { await waitCampus(); cancelName(); await nameTask?.value; do { accounts = try await accountStore.settings(settings) } catch { notify(error) } }
+    func setDefault(_ id: String) async { await stopBilling(); do { accounts = try await accountStore.setDefault(id); billing = nil; billingStatus = ""; await billingCache.clear() } catch { notify(error) } }
+    func saveSettings(_ settings: CampusSettings) async { guard !settingsSaving else { return }; settingsSaving = true; defer { settingsSaving = false }; await waitCampus(); cancelName(); await nameTask?.value; do { accounts = try await accountStore.settings(settings) } catch { notify(error) } }
 }

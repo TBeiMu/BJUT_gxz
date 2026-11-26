@@ -9,7 +9,7 @@ struct AcademicHeader: View {
             HStack { VStack(alignment: .leading, spacing: 5) { Text(app.academic.identity.map { $0.name.isEmpty ? $0.studentID : $0.name + " · " + $0.studentID } ?? "独立教务绑定").font(.headline); if let date = target == .exams ? app.academic.examUpdatedAt : app.academic.grades?.updatedAt { Text("更新于 " + ShanghaiClock.format(date, "M 月 d 日 HH:mm")).font(.caption).foregroundStyle(.secondary) } }; Spacer(); Button(app.academic.identity == nil ? "登录" : "刷新") { app.openAcademic(target) }.buttonStyle(.borderedProminent).disabled(app.academicBusy || !app.network.internetAvailable || app.academicError != nil) }
             if app.credentialPresent || app.credentialError { Button(app.credentialError ? "清除无法读取的教务密码" : "清除已记住的教务密码", role: .destructive) { Task { await app.clearCredential() } }.font(.caption) }
             if app.academic.identity != nil { Button("解绑教务资料", role: .destructive) { unbind = true }.font(.caption) }
-        } }.confirmationDialog("清除学校考试与成绩及已记住的教务密码？自定义考试保留。", isPresented: $unbind, titleVisibility: .visible) { Button("解绑", role: .destructive) { Task { await app.unbindAcademic() } } }
+        } }.onChange(of: unbind) { _, value in app.modal("academic-unbind-" + target.rawValue, value) }.onDisappear { app.modal("academic-unbind-" + target.rawValue, false) }.confirmationDialog("清除学校考试与成绩及已记住的教务密码？自定义考试保留。", isPresented: $unbind, titleVisibility: .visible) { Button("解绑", role: .destructive) { Task { await app.unbindAcademic() } } }
     }
 }
 

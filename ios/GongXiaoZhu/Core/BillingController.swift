@@ -7,7 +7,10 @@ extension AppState {
         guard accounts.defaultAccountID == account.id else { return }
         billing = snapshot; billingCached = snapshot != nil; billingCanOffline = false
     }
-    func cancelBilling() { billingSession?.transport.cancel(); billingTask?.cancel(); billingCanOffline = false; billingCaptcha = nil; billingCode = ""; billingPage = nil; billingPrefill = nil }
+    func cancelBilling() {
+        let session = billingSession; session?.transport.cancel(); billingTask?.cancel(); billingCanOffline = false; billingCaptcha = nil; billingCode = ""; billingPage = nil; billingPrefill = nil
+        if let session { Task { await session.close(); if billingSession === session { billingSession = nil } } }
+    }
     func stopBilling() async {
         cancelBilling(); await billingTask?.value
         if let session = billingSession { await session.close(); if billingSession === session { billingSession = nil } }
@@ -23,7 +26,9 @@ extension AppState {
                 if let previous = billingSession, previous.transport.lease.isValid, !web { session = previous }
                 else { if let old = billingSession { await old.close() }; session = BillingSession(transport: NetworkTransport(route: try network.route(.wifiOnly))); billingSession = session }
                 if web {
-                    billingPage = try await session.openWeb(account); billingPrefill = await session.prefill()
+                    let page = try await session.openWeb(account); let prefill = await session.prefill()
+                    try session.transport.lease.requireValid(); guard active, accounts.defaultAccountID == id else { throw AppError.cancelled }
+                    billingPage = page; billingPrefill = prefill
                 } else {
                     let code: String? = billingCaptcha == nil ? nil : billingCode.trimmed
                     let result = try await session.refresh(account, code: code); try await acceptBilling(result, session: session, id: id)
@@ -51,7 +56,9 @@ extension AppState {
         guard !billingBusy, let session = billingSession, let id = accounts.defaultAccountID else { return }; billingBusy = true
         billingTask = Task {
             do {
-                switch try await session.submitWeb(token: token, password: values["password"] ?? "", code: values["code"] ?? "") {
+                let result = try await session.submitWeb(token: token, password: values["password"] ?? "", code: values["code"] ?? "")
+                try session.transport.lease.requireValid(); guard active, accounts.defaultAccountID == id else { throw AppError.cancelled }
+                switch result {
                 case .page(let page): billingPage = page
                 case .success(let result): try await acceptBilling(result, session: session, id: id)
                 }
@@ -61,10 +68,11 @@ extension AppState {
     }
     func offlineDevice(_ device: OnlineDevice) async {
         guard billingCanOffline, !billingBusy, let session = billingSession, network.wifiAvailable else { return }
+        let accountID = accounts.defaultAccountID
         autoSuppressed = true; await waitCampus(); guard session.transport.lease.isValid else { return }
-        billingBusy = true; billingCanOffline = false; await billingCache.clear()
+        billingBusy = true; billingCanOffline = false; billingStatus = "正在注销设备…"; await billingCache.clear()
         do { try await session.offline(device); try session.transport.lease.requireValid(); billingStatus = "注销已确认，请刷新核对" }
-        catch { if session.transport.lease.isValid { billingStatus = "注销未确认，请刷新核对" } }
+        catch { if accounts.defaultAccountID == accountID { billingStatus = "注销未确认，请刷新核对" } }
         billingBusy = false
     }
 }

@@ -34,6 +34,8 @@ struct ScheduleHome: View {
                 Button { app.setWholeWeek(!app.wholeWeek) } label: { Label(app.wholeWeek ? "今日" : "整周", systemImage: app.wholeWeek ? "list.bullet" : "rectangle.split.3x3") }.buttonStyle(.borderedProminent)
             }.padding(.horizontal, 20).padding(.bottom, 8)
         }.navigationBarHidden(true)
+            .onChange(of: weekPicker) { _, value in app.modal("week-picker", value) }
+            .onDisappear { app.modal("week-picker", false) }
             .task(id: app.active && app.tab == .schedule && (app.paths[.schedule] ?? []).isEmpty) {
                 guard app.active, app.tab == .schedule, (app.paths[.schedule] ?? []).isEmpty else { return }
                 while !Task.isCancelled { let previousDay = ShanghaiClock.day(now); now = Date(); if previousDay != ShanghaiClock.day(now) { app.selectToday() }; try? await Task.sleep(for: .seconds(60)) }
@@ -45,16 +47,16 @@ struct ScheduleHome: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .center) {
-                Button { if app.display != nil { weekPicker = true } } label: { HStack(alignment: .firstTextBaseline, spacing: 8) { Text(app.display == nil ? "课表" : "第 \(app.selectedWeek) 周").font(.system(.largeTitle, design: .rounded, weight: .bold)); if app.display != nil { Image(systemName: "chevron.down").font(.caption) } }.foregroundStyle(.primary).frame(minHeight: 55, alignment: .leading) }
+                Button { if app.display != nil { weekPicker = true } } label: { HStack(alignment: .firstTextBaseline, spacing: 8) { ZStack(alignment: .leading) { Text("第 60 周").hidden().accessibilityHidden(true); Text(app.display == nil ? "课表" : "第 \(app.selectedWeek) 周") }.font(.system(.largeTitle, design: .rounded, weight: .bold)).lineLimit(2); if app.display != nil { Image(systemName: "chevron.down").font(.caption) } }.foregroundStyle(.primary).frame(minHeight: 55, alignment: .leading) }
                 Spacer(minLength: 8)
-                if app.scheduleBusy { BrandLoader(size: 25) }
+                BrandLoader(size: 25).opacity(app.scheduleBusy ? 1 : 0).accessibilityHidden(!app.scheduleBusy)
                 Menu {
                     Button("添加自定义课程", systemImage: "plus") { Task { await app.editCourse() } }
                     Button("导入／管理课表", systemImage: "arrow.triangle.2.circlepath") { app.open(.schedule) }
                 } label: { Image(systemName: "plus").font(.title3).frame(width: 44, height: 44).background(.white.opacity(0.5), in: Circle()) }.accessibilityLabel("课表操作")
             }
             TimelineView(.periodic(from: .now, by: 60)) { context in Text(ShanghaiClock.format(context.date, "M 月 d 日 EEEE")).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
-            HStack { Text(app.campusMessage).lineLimit(2); if app.campusRunning { BrandLoader(size: 16, motion: .signal) } }.font(.caption).foregroundStyle(.secondary).frame(minHeight: 32, alignment: .topLeading)
+            ZStack(alignment: .topLeading) { Text("校园网连接状态\n已为连接提示预留位置").lineLimit(2).hidden().accessibilityHidden(true); HStack(alignment: .top) { Text(app.campusMessage).lineLimit(2); BrandLoader(size: 16, motion: .signal).opacity(app.campusRunning ? 1 : 0).accessibilityHidden(!app.campusRunning) } }.font(.caption).foregroundStyle(.secondary).frame(minHeight: 32, alignment: .topLeading)
         }.padding(.horizontal, 22).padding(.top, 10)
     }
     @ViewBuilder private func today(_ week: ScheduleWeek) -> some View {
@@ -184,7 +186,7 @@ struct CourseDetails: View {
     var body: some View {
         NavigationStack {
             ScrollView { VStack(spacing: 18) { ForEach(courses, id: \.occurrenceKey) { course in AppCard { VStack(alignment: .leading, spacing: 14) { Text(course.name).font(.title2.bold()); Text(course.date + " · " + LessonTimes.label(course.lessons)).font(.subheadline); if !course.location.isEmpty { Label(course.location, systemImage: "mappin.and.ellipse") }; if !course.teacher.isEmpty { Label(course.teacher, systemImage: "person") }; if !course.weeksText.isEmpty { Text(course.weeksText).foregroundStyle(.secondary) }; HStack { Button("编辑") { open(course, delete: false) }.buttonStyle(.borderedProminent); Button("删除", role: .destructive) { open(course, delete: true) }.buttonStyle(.bordered) } } } } }.padding(20) }.navigationTitle(courses.count > 1 ? "重叠课程" : "课程详情").toolbar { Button("完成") { dismiss() } }
-        }.presentationDetents([.medium, .large])
+        }.presentationDetents([.medium, .large]).onAppear { app.modal("course-details", true) }.onDisappear { app.modal("course-details", false) }
     }
     private func open(_ course: Course, delete: Bool) { dismiss(); Task { try? await Task.sleep(for: .milliseconds(300)); await app.editCourse(course, deleteOnly: delete) } }
 }
@@ -197,14 +199,15 @@ struct ScheduleManagementPage: View {
         ScrollView { VStack(spacing: 16) {
             if let error = app.scheduleError { StorageNotice(module: "schedule", text: error) }
             else {
-                AppCard { VStack(alignment: .leading, spacing: 12) { Text("研究生课表").font(.headline); if let identity = app.schedule.identity { Text(identity.name.isEmpty ? identity.studentID : identity.name + " · " + identity.studentID) }; if let complete = app.schedule.complete { Text(complete.term.title).font(.subheadline); Text("更新于 " + ShanghaiClock.format(complete.updatedAt, "M 月 d 日 HH:mm")).font(.caption).foregroundStyle(.secondary) }; if !app.scheduleStatus.isEmpty { Text(app.scheduleStatus).font(.subheadline) }; if let pending = app.schedule.pending { ProgressView(value: Double(pending.weeks.count), total: Double(pending.term.weekCount)); Text("已保存 \(pending.weeks.count)／\(pending.term.weekCount) 周").font(.caption) }; HStack { if app.scheduleBusy { Button("暂停导入") { app.pauseImport() }.buttonStyle(.bordered) } else { Button(app.schedule.pending == nil ? "登录并导入整学期" : "继续导入") { app.startImport() }.buttonStyle(.borderedProminent).disabled(!app.network.internetAvailable || app.importSession != nil) } }; if app.schedule.pending != nil { Button("放弃未完成导入", role: .destructive) { confirmDiscard = true } }; if app.schedule.identity != nil { Button("解绑学校课表", role: .destructive) { confirmUnbind = true } } } }
+                AppCard { VStack(alignment: .leading, spacing: 12) { Text("研究生课表").font(.headline); if let identity = app.schedule.identity { Text(identity.name.isEmpty ? identity.studentID : identity.name + " · " + identity.studentID) }; if let complete = app.schedule.complete { Text(complete.term.title).font(.subheadline); Text("更新于 " + ShanghaiClock.format(complete.updatedAt, "M 月 d 日 HH:mm")).font(.caption).foregroundStyle(.secondary) }; if !app.scheduleStatus.isEmpty { Text(app.scheduleStatus).font(.subheadline) }; if let pending = app.schedule.pending { ProgressView(value: Double(pending.weeks.count), total: Double(pending.term.weekCount)); Text("已保存 \(pending.weeks.count)／\(pending.term.weekCount) 周").font(.caption) }; HStack { if app.scheduleBusy { Button("暂停导入") { app.pauseImport() }.buttonStyle(.bordered).disabled(app.scheduleCommitting) } else { Button(app.schedule.pending == nil ? "登录并导入整学期" : "继续导入") { app.startImport() }.buttonStyle(.borderedProminent).disabled(!app.network.internetAvailable || app.importSession != nil) } }; if app.schedule.pending != nil { Button("放弃未完成导入", role: .destructive) { confirmDiscard = true } }; if app.schedule.identity != nil { Button("解绑学校课表", role: .destructive) { confirmUnbind = true } } } }
                 AppCard { VStack(alignment: .leading, spacing: 14) { Text("本地课程与学期").font(.headline); Button("添加自定义课程", systemImage: "plus") { Task { await app.editCourse() } }; Button("建立本地学期", systemImage: "calendar.badge.plus") { Task { await app.editCourse(newTerm: true) } }; if app.schedule.complete != nil { Button("查看学校课表") { Task { await app.selectTerm(nil) } } }; ForEach(app.schedule.localTerms) { term in HStack { Button(term.title) { Task { await app.selectTerm(term.id) } }; Spacer(); if app.schedule.selectedLocalTermID == term.id { Image(systemName: "checkmark") }; Menu { Button("删除本地学期及其课程", role: .destructive) { confirmTermDelete(term) } } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) } } } } }
                 Text("本科课表导入暂不可用").font(.footnote).foregroundStyle(.secondary)
             }
         }.padding(20).frame(maxWidth: 760) }.navigationTitle("课表管理")
+            .onChange(of: confirmUnbind || confirmDiscard || deletingTerm != nil) { _, value in app.modal("schedule-confirm", value) }.onDisappear { app.modal("schedule-confirm", false) }
             .confirmationDialog("解绑只清除学校资料，保留自定义课程。继续？", isPresented: $confirmUnbind, titleVisibility: .visible) { Button("解绑", role: .destructive) { Task { await app.unbindSchedule() } } }
             .confirmationDialog("放弃后将清除未完成进度，保留原完整课表。", isPresented: $confirmDiscard, titleVisibility: .visible) { Button("放弃导入", role: .destructive) { Task { await app.clearPending() } } }
-            .confirmationDialog("删除该本地学期及全部自定义课程？", isPresented: Binding(get: { deletingTerm != nil }, set: { if !$0 { deletingTerm = nil } }), titleVisibility: .visible) { Button("删除", role: .destructive) { if let term = deletingTerm { Task { await app.deleteLocalTerm(term.id) }; deletingTerm = nil } } }
+            .confirmationDialog("删除该本地学期及全部自定义课程？", isPresented: Binding(get: { deletingTerm != nil }, set: { if !$0 { deletingTerm = nil } }), titleVisibility: .visible, presenting: deletingTerm) { term in Button("删除", role: .destructive) { Task { await app.deleteLocalTerm(term.id) }; deletingTerm = nil } }
     }
     @State private var deletingTerm: LocalTerm?
     private func confirmTermDelete(_ term: LocalTerm) { deletingTerm = term }

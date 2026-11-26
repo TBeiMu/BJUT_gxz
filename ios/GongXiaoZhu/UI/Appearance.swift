@@ -85,6 +85,7 @@ struct AppCard<Content: View>: View {
 struct AppearancePage: View {
     @Environment(AppState.self) var app
     @State private var photoItem: PhotosPickerItem?
+    @State private var photoPicker = false
     var body: some View {
         @Bindable var appearance = app.appearance
         ScrollView {
@@ -110,7 +111,7 @@ struct AppearancePage: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3)) {
                             ForEach(0..<6) { index in Button { appearance.preferences.preset = index; appearance.preferences.mode = "preset" } label: { Text(AppearanceStore.titles[index]).font(.subheadline).frame(maxWidth: .infinity).padding(.vertical, 20).background(LinearGradient(colors: AppearanceStore.gradients[index], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.black).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(appearance.preferences.mode == "preset" && appearance.preferences.preset == index ? appearance.accent : .clear, lineWidth: 2)) } }
                         }
-                        PhotosPicker(selection: $photoItem, matching: .images) { Label("选择图片", systemImage: "photo") }.buttonStyle(.bordered)
+                        Button { photoPicker = true } label: { Label("选择图片", systemImage: "photo") }.buttonStyle(.bordered)
                         if appearance.photo != nil {
                             Picker("图片显示", selection: $appearance.preferences.mode) { Text("自选图片").tag("photo"); Text("图片主色").tag("color"); Text("颜色背景").tag("preset") }.pickerStyle(.segmented)
                             Text("图片模糊 \(Int(appearance.preferences.blur))").font(.subheadline)
@@ -128,6 +129,8 @@ struct AppearancePage: View {
                 AppCard { VStack(alignment: .leading, spacing: 12) { Text("推荐搭配").font(.headline); Button("薄荷 · 松绿 · 轻透") { appearance.preferences.preset = 1; appearance.preferences.accent = 2; appearance.preferences.mode = "preset"; appearance.preferences.transparency = 20 }; Button("恢复默认外观") { appearance.reset() } } }
             }.padding(20).frame(maxWidth: 760)
         }.navigationTitle("个性化")
+            .photosPicker(isPresented: $photoPicker, selection: $photoItem, matching: .images)
+            .onChange(of: photoPicker || appearance.error != nil) { _, value in app.modal("photo-picker", value) }.onDisappear { app.modal("photo-picker", false) }
             .onChange(of: photoItem) { _, item in Task { if let data = try? await item?.loadTransferable(type: Data.self) { await appearance.importPhoto(data) } } }
             .alert("图片未保存", isPresented: Binding(get: { appearance.error != nil }, set: { if !$0 { appearance.error = nil } })) { Button("知道了") { appearance.error = nil } } message: { Text(appearance.error ?? "") }
     }

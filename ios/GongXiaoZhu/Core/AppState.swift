@@ -32,6 +32,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     var message: String?
     var loaded = false
     var active = true
+    var localModals = Set<String>()
     var wholeWeek = UserDefaults.standard.bool(forKey: "schedule.wholeWeek")
     var selectedWeek = 1
     var accountEdit: AccountEdit?
@@ -45,6 +46,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     var campusMessage = "连接校园 WiFi 后可登录"
     var campusNeedsChoice = false
     var settingsExpanded = false
+    var settingsSaving = false
     var scheduleBusy = false
     var scheduleStatus = ""
     var schedulePage: SchoolLoginPage?
@@ -92,7 +94,8 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     }
     var display: DisplaySchedule? { schedule.display() }
     var visibleWeek: ScheduleWeek? { display?.weeks.first { $0.number == selectedWeek } }
-    var hasModal: Bool { accountEdit != nil || courseEdit != nil || examEdit != nil || schedulePage != nil || billingPage != nil || academicTarget != nil }
+    var hasModal: Bool { !localModals.isEmpty || updates.cellularConfirmation || accountEdit != nil || courseEdit != nil || examEdit != nil || schedulePage != nil || billingPage != nil || academicTarget != nil }
+    func modal(_ key: String, _ presented: Bool) { if presented { localModals.insert(key) } else { localModals.remove(key) } }
     func open(_ page: AppPage, accountsFocus: Bool = false) { campusAccountsFocus = accountsFocus; paths[tab, default: []].append(page) }
     func back() { if !(paths[tab] ?? []).isEmpty { paths[tab]?.removeLast() } }
     func notify(_ error: Error) { message = safeMessage(error) }

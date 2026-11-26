@@ -13,7 +13,7 @@ struct BillingPage: View {
                 HStack(alignment: .top, spacing: 12) {
                     Menu { ForEach(app.accounts.accounts) { account in Button(account.title) { Task { await app.setDefault(account.id) } } } } label: { HStack(spacing: 4) { Text(app.accounts.defaultAccount?.title ?? "未设置默认账号").lineLimit(2); Image(systemName: "chevron.down").font(.caption2) }.font(.subheadline).foregroundStyle(.primary) }.frame(maxWidth: .infinity, alignment: .leading)
                     ZStack(alignment: .topTrailing) {
-                        Text("刷新未确认，显示网页数据").font(.subheadline).frame(maxWidth: 180, alignment: .trailing).hidden().accessibilityHidden(true)
+                        HStack(alignment: .top, spacing: 4) { Color.clear.frame(width: 20, height: 20); ZStack(alignment: .topLeading) { ForEach(["刷新未确认，显示网页数据", "登录未确认，请重查或使用内置网页登录", "注销未确认，请刷新核对", "账号不符，请重新登录", "验证码未通过，请重填"], id: \.self) { Text($0).font(.subheadline).fixedSize(horizontal: false, vertical: true) } } }.frame(maxWidth: 180, alignment: .trailing).hidden().accessibilityHidden(true)
                         HStack(alignment: .top, spacing: 4) { if app.billingBusy { BrandLoader(size: 20) }; Text(app.billingStatus).font(.subheadline).fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading) }.frame(maxWidth: 180, alignment: .trailing)
                     }
                 }.frame(minHeight: 48, alignment: .top)
@@ -38,8 +38,10 @@ struct BillingPage: View {
                 }
             }.padding(.horizontal, 22).padding(.bottom, 20).frame(maxWidth: 760)
         }.navigationBarHidden(true)
+            .onChange(of: choosingDevice || device != nil) { _, value in app.modal("device-offline", value) }
+            .onDisappear { app.modal("device-offline", false) }
             .onAppear { app.runAutomatic() }
             .confirmationDialog("选择要注销的设备", isPresented: $choosingDevice, titleVisibility: .visible) { ForEach(app.billing?.devices ?? []) { item in Button(item.address.isEmpty ? item.mac : item.address) { device = item } } }
-            .confirmationDialog("确认注销这台在线设备？", isPresented: Binding(get: { device != nil }, set: { if !$0 { device = nil } }), titleVisibility: .visible) { Button("确认注销设备", role: .destructive) { if let selected = device { Task { await app.offlineDevice(selected) }; device = nil } } } message: { Text("这会使选中的设备下线。注销后不会自动重新认证。") }
+            .confirmationDialog("确认注销这台在线设备？", isPresented: Binding(get: { device != nil }, set: { if !$0 { device = nil } }), titleVisibility: .visible, presenting: device) { selected in Button("确认注销设备", role: .destructive) { Task { await app.offlineDevice(selected) }; device = nil } } message: { _ in Text("这会使选中的设备下线。注销后不会自动重新认证。") }
     }
 }

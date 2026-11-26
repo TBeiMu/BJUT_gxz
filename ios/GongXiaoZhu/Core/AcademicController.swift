@@ -14,14 +14,16 @@ extension AppState {
                 academicUsername = academic.identity?.studentID ?? ""; academicPassword = ""; academicCode = ""; rememberAcademic = false
                 if let credential = try? await credentialStore.load() { academicUsername = credential.studentID; academicPassword = credential.password; rememberAcademic = true }
                 let session = AcademicSession(transport: NetworkTransport(route: try network.route(.internet))); academicSession = session
-                academicForm = try await session.open(); academicStatus = "填写学校教务账号与验证码"
+                let form = try await session.open(); try session.transport.lease.requireValid()
+                guard active, academicSession === session, academicTarget == target else { throw AppError.cancelled }
+                academicForm = form; academicStatus = "填写学校教务账号与验证码"
             } catch { academicStatus = safeMessage(error) }
             academicBusy = false; academicTask = nil
         }
     }
     func refreshAcademicCaptcha() {
         guard !academicBusy, let session = academicSession, let form = academicForm else { return }; academicBusy = true
-        academicTask = Task { do { academicForm = try await session.refreshCaptcha(form.token); academicCode = "" } catch { academicStatus = safeMessage(error); academicForm = nil }; academicBusy = false; academicTask = nil }
+        academicTask = Task { do { let next = try await session.refreshCaptcha(form.token); try session.transport.lease.requireValid(); guard active, academicSession === session else { throw AppError.cancelled }; academicForm = next; academicCode = "" } catch { if session.transport.lease.isValid { academicStatus = safeMessage(error); academicForm = nil } }; academicBusy = false; academicTask = nil }
     }
     func submitAcademic() {
         guard !academicBusy, let session = academicSession, let form = academicForm, let target = academicTarget else { return }

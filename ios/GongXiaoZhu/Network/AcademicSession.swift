@@ -16,7 +16,7 @@ enum AcademicParser {
             if try !cell.select("table").array().isEmpty { continue }
             let value = try text(cell)
             if value.trimmingCharacters(in: CharacterSet(charactersIn: "：:")) == label {
-                if let sibling = cell.nextElementSibling() { values.append(try text(sibling)) }
+                if let sibling = try cell.nextElementSibling() { values.append(try text(sibling)) }
             } else if value.hasPrefix(label + "：") || value.hasPrefix(label + ":") {
                 let remainder = String(value.dropFirst(label.count + 1)).trimmed
                 if !remainder.isEmpty && remainder.count <= 100 && !remainder.contains("姓名") && !remainder.contains("学号") { values.append(remainder) }
@@ -76,7 +76,11 @@ enum AcademicParser {
     private static func grid<T: Sendable>(_ document: Document, id: String, head: [String], record: ([Element]) throws -> T) throws -> AcademicGrid<T> {
         if try login(document) { throw AppError.expired }
         guard let table = try document.select("#" + id).first() else { throw AppError.response }
-        let rows = try table.select("tr").array().filter { try $0.closest("table") === table }
+        let rows = try table.select("tr").array().filter { row in
+            var ancestor = row.parent()
+            while let current = ancestor { if current.tagName() == "table" { return current === table }; ancestor = current.parent() }
+            return false
+        }
         func cells(_ row: Element) -> [Element] { row.children().array().filter { ["td", "th"].contains($0.tagName()) } }
         guard let first = rows.first, try cells(first).map(text) == head else { throw AppError.response }
         var records: [T] = []; var empty = false; var pager: Element?
@@ -92,7 +96,7 @@ enum AcademicParser {
             } else { throw AppError.response }
         }
         guard records.isEmpty == empty else { throw AppError.response }
-        return AcademicGrid(records: records, next: try pager.map { try next($0, id: id) })
+        return AcademicGrid(records: records, next: try pager.flatMap { try next($0, id: id) })
     }
     private static func next(_ pager: Element, id: String) throws -> AcademicPostBack? {
         let links = try pager.select("a[href]").array()

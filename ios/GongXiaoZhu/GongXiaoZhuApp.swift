@@ -68,7 +68,7 @@ struct RootView: View {
         .sheet(item: $app.schedulePage, onDismiss: { if !app.scheduleSubmitting { app.pauseImport() } }) { page in SchoolPageSheet(page: page).environment(app) }
         .sheet(item: $app.billingPage, onDismiss: { if app.billingPrefill != nil { Task { await app.stopBilling() } } }) { page in SchoolPageSheet(page: page).environment(app) }
         .alert("工小助", isPresented: Binding(get: { app.message != nil }, set: { if !$0 { app.message = nil } })) { Button("知道了") { app.message = nil } } message: { Text(app.message ?? "") }
-        .alert("发现 iOS 新版本", isPresented: Binding(get: { app.updates.offered != nil && !app.hasModal }, set: { if !$0 { app.updates.offered = nil } }), presenting: app.updates.offered) { next in
+        .alert("发现 iOS 新版本", isPresented: Binding(get: { app.updates.offered != nil && !app.hasModal && app.message == nil && scenePhase == .active }, set: { if !$0 { app.updates.offered = nil } }), presenting: app.updates.offered) { next in
             Button("取消更新", role: .cancel) { app.updates.offered = nil }
             Button("忽略本次更新") { app.updates.ignore(next) }
             Button("立即更新") { app.updates.select(next); app.open(.update) }
@@ -89,6 +89,7 @@ struct StorageNotice: View {
     @State private var confirm = false
     var body: some View {
         AppCard { VStack(alignment: .leading, spacing: 12) { Text(text).font(.subheadline); Button("重新读取") { Task { do { switch module { case "accounts": app.accounts = try await app.accountStore.load(); app.accountError = nil; case "schedule": app.schedule = try await app.scheduleStore.load(); app.scheduleError = nil; default: app.academic = try await app.academicStore.load(); app.academicError = nil } } catch { app.notify(error) } } }; Button("清除本模块资料并重新开始", role: .destructive) { confirm = true } } }
+            .onChange(of: confirm) { _, value in app.modal("storage-reset-" + module, value) }.onDisappear { app.modal("storage-reset-" + module, false) }
             .confirmationDialog("清除后无法恢复本模块资料，确定继续？", isPresented: $confirm, titleVisibility: .visible) { Button("清除本模块资料", role: .destructive) { Task { await app.resetStorage(module) } } }
     }
 }

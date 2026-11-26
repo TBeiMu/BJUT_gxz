@@ -52,7 +52,7 @@ enum BillingParser {
               action.path.matches("/Self/login/verify(?:;jsessionid=[a-zA-Z0-9]+)?") else { throw AppError.address }
         let captcha = try form.select("#randomDiv").first()
         let required: Bool
-        if let captcha { required = !captcha.hasClass("hide") && !captcha.hasClass("hidden") && !captcha.hasAttr("hidden") && !(try captcha.attr("style")).replacingOccurrences(of: " ", with: "").lowercased().contains("display:none") }
+        if let captcha { let style = try captcha.attr("style"); required = !captcha.hasClass("hide") && !captcha.hasClass("hidden") && !captcha.hasAttr("hidden") && !style.replacingOccurrences(of: " ", with: "").lowercased().contains("display:none") }
         else { required = false }
         return BillingLoginForm(token: UUID().uuidString, action: action, html: html, pageURL: base, fields: [("checkcode", checkcode)],
                                 usernameField: "account", passwordField: "password", captchaField: "code", captchaURL: URL(string: Addresses.billing + "/Self/login/randomCode"), captchaRequired: required)

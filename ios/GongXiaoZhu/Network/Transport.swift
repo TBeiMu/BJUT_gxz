@@ -260,7 +260,7 @@ final class NetworkTransport: @unchecked Sendable {
             do {
                 try lease.requireValid(); try Task.checkCancellation()
                 guard call.valid else { throw AppError.cancelled }
-                try await channel.pipeline.configureHTTPClientPipeline().flatMap { channel.pipeline.addHandler(collector) }.get()
+                try await channel.pipeline.addHTTPClientHandlers().flatMap { channel.pipeline.addHandler(collector) }.get()
                 var fields = HTTPHeaders()
                 fields.add(name: "Host", value: url.host! + (url.port.map { ":\($0)" } ?? ""))
                 fields.add(name: "User-Agent", value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 GongXiaoZhu/" + AppInfo.version)
