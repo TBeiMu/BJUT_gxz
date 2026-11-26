@@ -86,6 +86,9 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     @ObservationIgnored var academicSession: AcademicSession?
     @ObservationIgnored var automaticCampusUsed = false
     @ObservationIgnored var automaticBillingUsed = false
+    @ObservationIgnored var campusFinishedInBackground = false
+    @ObservationIgnored var billingGeneration = UUID()
+    @ObservationIgnored var academicGeneration = UUID()
     @ObservationIgnored var autoSuppressed = false
     @ObservationIgnored var undoTimer: Task<Void, Never>?
 
@@ -113,7 +116,8 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     func setWholeWeek(_ value: Bool) { wholeWeek = value; UserDefaults.standard.set(value, forKey: "schedule.wholeWeek") }
     func foreground() {
         guard loaded else { return }; active = true
-        automaticCampusUsed = campusRunning; automaticBillingUsed = false; autoSuppressed = false
+        automaticCampusUsed = campusRunning || campusFinishedInBackground; campusFinishedInBackground = false
+        automaticBillingUsed = false; autoSuppressed = false
         selectToday(); network.start(); runAutomatic()
     }
     func background() {

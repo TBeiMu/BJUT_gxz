@@ -9,6 +9,7 @@ extension AppState {
     func removeStoredCredentialKeepingDraft() async { do { try await credentialStore.reset(); credentialPresent = false; credentialError = false } catch { notify(error) } }
     func openAcademic(_ target: AcademicTarget) {
         guard !academicBusy, academicError == nil else { return }; invalidateUndo(); academicTarget = target; academicStatus = "正在连接学校…"; academicBusy = true
+        academicGeneration = UUID(); let generation = academicGeneration
         academicTask = Task {
             do {
                 academicUsername = academic.identity?.studentID ?? ""; academicPassword = ""; academicCode = ""; rememberAcademic = false
@@ -17,18 +18,20 @@ extension AppState {
                 let form = try await session.open(); try session.transport.lease.requireValid()
                 guard active, academicSession === session, academicTarget == target else { throw AppError.cancelled }
                 academicForm = form; academicStatus = "填写学校教务账号与验证码"
-            } catch { academicStatus = safeMessage(error) }
-            academicBusy = false; academicTask = nil
+            } catch { if academicGeneration == generation { academicStatus = safeMessage(error) } }
+            if academicGeneration == generation { academicBusy = false; academicTask = nil }
         }
     }
     func refreshAcademicCaptcha() {
         guard !academicBusy, let session = academicSession, let form = academicForm else { return }; academicBusy = true
-        academicTask = Task { do { let next = try await session.refreshCaptcha(form.token); try session.transport.lease.requireValid(); guard active, academicSession === session else { throw AppError.cancelled }; academicForm = next; academicCode = "" } catch { if session.transport.lease.isValid { academicStatus = safeMessage(error); academicForm = nil } }; academicBusy = false; academicTask = nil }
+        academicGeneration = UUID(); let generation = academicGeneration
+        academicTask = Task { do { let next = try await session.refreshCaptcha(form.token); try session.transport.lease.requireValid(); guard active, academicSession === session else { throw AppError.cancelled }; academicForm = next; academicCode = "" } catch { if academicGeneration == generation && session.transport.lease.isValid { academicStatus = safeMessage(error); academicForm = nil } }; if academicGeneration == generation { academicBusy = false; academicTask = nil } }
     }
     func submitAcademic() {
         guard !academicBusy, let session = academicSession, let form = academicForm, let target = academicTarget else { return }
         let username = academicUsername, password = academicPassword, code = academicCode, revision = academic.revision
         academicBusy = true; academicForm = nil; academicStatus = "正在登录与读取完整分页…"
+        academicGeneration = UUID(); let generation = academicGeneration
         academicTask = Task {
             do {
                 let identity = try await session.submit(token: form.token, username: username, password: password, captcha: code)
@@ -38,8 +41,8 @@ extension AppState {
                 academicResult = (identity, exams, grades, revision, session.transport.lease)
                 if let old = academic.identity, old.studentID != identity.studentID { pendingAcademicIdentity = identity; academicStatus = "学校已核验新学号，请确认更换绑定" }
                 else { await commitAcademic() }
-            } catch { if session.transport.lease.isValid { academicStatus = safeMessage(error) }; await session.close(); if academicSession === session { academicSession = nil } }
-            academicBusy = false; academicTask = nil
+            } catch { if academicGeneration == generation && session.transport.lease.isValid { academicStatus = safeMessage(error) }; await session.close(); if academicSession === session { academicSession = nil } }
+            if academicGeneration == generation { academicBusy = false; academicTask = nil }
         }
     }
     func commitAcademic() async {
@@ -57,8 +60,9 @@ extension AppState {
     func cancelAcademic() {
         guard !academicCommitting else { return }
         academicSession?.transport.cancel(); academicTask?.cancel(); academicForm = nil; academicResult = nil; pendingAcademicIdentity = nil; academicPassword = ""; academicCode = ""; academicTarget = nil
+        academicGeneration = UUID(); let generation = academicGeneration
         let session = academicSession; let task = academicTask
-        Task { await task?.value; await session?.close(); if academicSession === session { academicSession = nil }; academicBusy = false }
+        Task { await task?.value; await session?.close(); if academicSession === session { academicSession = nil }; if academicGeneration == generation { academicBusy = false } }
     }
     func unbindAcademic() async {
         cancelAcademic(); await academicTask?.value; invalidateUndo()

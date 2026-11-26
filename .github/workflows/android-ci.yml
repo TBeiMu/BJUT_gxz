@@ -3,10 +3,10 @@ name: 安卓检查
 on:
   push:
     branches: [main]
-    paths-ignore: ['ios/**', 'docs/ios/**', '.github/workflows/ios-release.yml']
+    paths-ignore: ['ios/**', 'docs/ios/**', '.github/workflows/ios-release.yml', 'README.md']
   pull_request:
     branches: [main]
-    paths-ignore: ['ios/**', 'docs/ios/**', '.github/workflows/ios-release.yml']
+    paths-ignore: ['ios/**', 'docs/ios/**', '.github/workflows/ios-release.yml', 'README.md']
   workflow_dispatch:
 
 permissions:

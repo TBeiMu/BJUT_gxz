@@ -19,20 +19,27 @@ struct AppearancePreferences: Codable, Equatable {
     var photo: UIImage?
     var error: String?
     static var photoURL: URL { VaultFile.directory.appendingPathComponent("wallpaper.jpg") }
-    static let accents: [Color] = [Color(hex: 0xE5482E), Color(hex: 0x287CC2), Color(hex: 0x26836C), Color(hex: 0x7B5BB2)]
+    static let accents: [Color] = [Color(hex: 0xE5482E), Color(hex: 0x276BC0), Color(hex: 0x207B58), Color(hex: 0x7050B5)]
     static let titles = ["蓝青", "薄荷", "薰衣草", "樱粉", "暖杏", "灰白"]
-    static let gradients: [[Color]] = [[Color(hex: 0xDFEBF8), Color(hex: 0xD8F0EC)], [Color(hex: 0xE2F4E9), Color(hex: 0xCDE8DF)], [Color(hex: 0xEBE4F7), Color(hex: 0xDFE6F7)], [Color(hex: 0xF9E4EB), Color(hex: 0xF5E1DD)], [Color(hex: 0xF7E5D5), Color(hex: 0xF4EDDA)], [Color(hex: 0xF0F1F3), Color(hex: 0xE2E5E9)]]
+    static let gradients: [[Color]] = [[Color(hex: 0xF1F4F7), Color(hex: 0xF8F8F7), Color(hex: 0xFBFAF8)], [Color(hex: 0xE8F2EE), Color(hex: 0xF0F5F2), Color(hex: 0xF4F6F4)], [Color(hex: 0xEEEBF6), Color(hex: 0xF3F2F8), Color(hex: 0xF5F4F8)], [Color(hex: 0xF6EBEF), Color(hex: 0xF8F2F3), Color(hex: 0xF7F4F4)], [Color(hex: 0xF6EEE4), Color(hex: 0xF8F4EE), Color(hex: 0xF7F5F1)], [Color(hex: 0xEDEEEF), Color(hex: 0xF3F3F3), Color(hex: 0xF5F5F4)]]
+    static let swatches: [[Color]] = [[Color(hex: 0xA9CDF4), Color(hex: 0xD0EAF0), Color(hex: 0xE5E8FA)], [Color(hex: 0xA8DCCB), Color(hex: 0xD3EDE2), Color(hex: 0xE6F0ED)], [Color(hex: 0xC8B7E7), Color(hex: 0xE4DAF2), Color(hex: 0xE8E7F5)], [Color(hex: 0xE8B9CF), Color(hex: 0xF4DFE7), Color(hex: 0xF0E8F1)], [Color(hex: 0xE8C29E), Color(hex: 0xF3E2CD), Color(hex: 0xF5EBDF)], [Color(hex: 0xC5CFD8), Color(hex: 0xE2E7EB), Color(hex: 0xF0F2F5)]]
     init() {
         if let bytes = UserDefaults.standard.data(forKey: "appearance.preferences"), let value = try? JSONDecoder().decode(AppearancePreferences.self, from: bytes), value.valid { preferences = value }
         if let data = try? Data(contentsOf: Self.photoURL), data.count <= 20 * 1024 * 1024 { photo = UIImage(data: data) }
         if photo == nil && preferences.mode != "preset" { preferences.mode = "preset" }
     }
-    var accent: Color { Self.accents[preferences.accent] }
+    var accent: Color {
+        let dark = preferences.theme == "dark"
+        if dark { return [Color(hex: 0xFF6E52), Color(hex: 0x83B8FF), Color(hex: 0x72D0AB), Color(hex: 0xB8A2FF)][preferences.accent] }
+        return Self.accents[preferences.accent]
+    }
     var colorScheme: ColorScheme? { preferences.theme == "system" ? nil : preferences.theme == "dark" ? .dark : .light }
     var colors: [Color] {
-        if preferences.mode == "color" { let v = preferences.photoColor; return [Color(red: v[0], green: v[1], blue: v[2]).opacity(0.65), Color(red: v[0], green: v[1], blue: v[2]).opacity(0.22)] }
+        if preferences.mode == "color" { let v = preferences.photoColor, base = Color(red: v[0], green: v[1], blue: v[2]), paper = schemeColor; return [base.mixed(with: paper, fraction: 0.78), base.mixed(with: paper, fraction: 0.9), base.mixed(with: paper, fraction: 0.96)] }
+        if preferences.theme == "dark" { return Self.swatches[preferences.preset].map { $0.mixed(with: Color(hex: 0x0F1115), fraction: 0.9) } }
         return Self.gradients[preferences.preset]
     }
+    private var schemeColor: Color { preferences.theme == "dark" ? Color(hex: 0x0F1115) : Color(hex: 0xF5F5F5) }
     func importPhoto(_ data: Data) async {
         guard data.count <= 30 * 1024 * 1024, let original = UIImage(data: data), original.size.width > 0, original.size.height > 0, original.size.width * original.size.height <= 60_000_000 else { error = "图片无法读取或文件过大"; return }
         let ratio = min(1, 2400 / max(original.size.width, original.size.height))
@@ -56,6 +63,15 @@ struct AppearancePreferences: Codable, Equatable {
 }
 extension Color {
     init(hex: UInt32) { self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255) }
+    func mixed(with other: Color, fraction: Double) -> Color { Color(uiColor: UIColor(self).mixed(with: UIColor(other), fraction: fraction)) }
+}
+private extension UIColor {
+    func mixed(with other: UIColor, fraction: Double) -> UIColor {
+        var a = (CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0)), b = a
+        guard getRed(&a.0, green: &a.1, blue: &a.2, alpha: &a.3), other.getRed(&b.0, green: &b.1, blue: &b.2, alpha: &b.3) else { return other }
+        let t = CGFloat(fraction)
+        return UIColor(red: a.0 * (1 - t) + b.0 * t, green: a.1 * (1 - t) + b.1 * t, blue: a.2 * (1 - t) + b.2 * t, alpha: a.3 * (1 - t) + b.3 * t)
+    }
 }
 struct AppBackground: View {
     @Environment(AppState.self) var app
@@ -109,7 +125,7 @@ struct AppearancePage: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("颜色背景").font(.headline)
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3)) {
-                            ForEach(0..<6) { index in Button { appearance.preferences.preset = index; appearance.preferences.mode = "preset" } label: { Text(AppearanceStore.titles[index]).font(.subheadline).frame(maxWidth: .infinity).padding(.vertical, 20).background(LinearGradient(colors: AppearanceStore.gradients[index], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.black).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(appearance.preferences.mode == "preset" && appearance.preferences.preset == index ? appearance.accent : .clear, lineWidth: 2)) } }
+                            ForEach(0..<6) { index in Button { appearance.preferences.preset = index; appearance.preferences.mode = "preset" } label: { Text(AppearanceStore.titles[index]).font(.subheadline).frame(maxWidth: .infinity).padding(.vertical, 20).background(LinearGradient(colors: AppearanceStore.gradients[index] + [AppearanceStore.swatches[index][2]], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.primary).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(appearance.preferences.mode == "preset" && appearance.preferences.preset == index ? appearance.accent : .clear, lineWidth: 2)) } }
                         }
                         Button { photoPicker = true } label: { Label("选择图片", systemImage: "photo") }.buttonStyle(.bordered)
                         if appearance.photo != nil {

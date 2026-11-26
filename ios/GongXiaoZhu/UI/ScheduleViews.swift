@@ -139,7 +139,7 @@ struct WeekPager: UIViewControllerRepresentable {
         var programmaticGoal: Int?
         var oldWidth: CGFloat = 0
         override func viewDidLoad() {
-            super.viewDidLoad(); view.backgroundColor = .clear; scroll.backgroundColor = .clear; scroll.delegate = self; scroll.isPagingEnabled = true; scroll.showsHorizontalScrollIndicator = false; scroll.alwaysBounceHorizontal = false; scroll.directionalLockEnabled = true; scroll.contentInsetAdjustmentBehavior = .never; view.addSubview(scroll)
+            super.viewDidLoad(); view.backgroundColor = .clear; scroll.backgroundColor = .clear; scroll.delegate = self; scroll.isPagingEnabled = true; scroll.showsHorizontalScrollIndicator = false; scroll.alwaysBounceHorizontal = false; scroll.isDirectionalLockEnabled = true; scroll.contentInsetAdjustmentBehavior = .never; view.addSubview(scroll)
             for _ in 0..<3 { let host = UIHostingController(rootView: AnyView(EmptyView())); host.view.backgroundColor = .clear; addChild(host); scroll.addSubview(host.view); host.didMove(toParent: self); hosts.append(host) }
         }
         override func viewDidLayoutSubviews() {

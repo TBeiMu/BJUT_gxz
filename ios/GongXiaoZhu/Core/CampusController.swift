@@ -18,6 +18,7 @@ extension AppState {
                 if stillValid && !self.campusConfirmed { self.campusMessage = result.message; self.campusNeedsChoice = result.needsChoice }
                 self.campusRunning = false; self.campusTask = nil; self.campusTransport = nil
                 WorkLifetime.shared.end("campus", success: self.campusConfirmed)
+                if self.campusConfirmed && !self.active { self.campusFinishedInBackground = true }
                 if self.campusConfirmed && stillValid && self.active, let accountID { self.lookupName(accountID) }
                 self.stopMonitoringIfIdle()
             }

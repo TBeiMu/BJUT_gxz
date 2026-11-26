@@ -18,7 +18,12 @@ private struct MarkPen {
     var red: Color
     var scale = 1.0
     var unit: Double { min(size.width, size.height) / 68 }
-    func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: (size.width - 68 * unit) / 2 + (54 + (x - 54) * scale - 20) * unit, y: (size.height - 68 * unit) / 2 + (54 + (y - 54) * scale - 20) * unit) }
+    func point(_ x: Double, _ y: Double) -> CGPoint {
+        let width = Double(size.width), height = Double(size.height)
+        let px = (width - 68 * unit) / 2 + (54 + (x - 54) * scale - 20) * unit
+        let py = (height - 68 * unit) / 2 + (54 + (y - 54) * scale - 20) * unit
+        return CGPoint(x: CGFloat(px), y: CGFloat(py))
+    }
     func tile(_ x: Double, _ y: Double, _ width: Double, _ height: Double, _ color: Color, alpha: Double = 1, radius: Double = 4) {
         guard width > 0.05, height > 0.05, alpha > 0 else { return }
         let rect = CGRect(origin: point(x, y), size: CGSize(width: width * unit * scale, height: height * unit * scale))

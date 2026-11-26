@@ -138,7 +138,7 @@ struct ExamEditor: View {
                         if let record = edit.record {
                             Section { if record.original != nil { Button("恢复学校原始内容") { save(restore: true) } }; Button(record.original != nil && !record.retained ? "隐藏这场考试" : "删除这场考试", role: .destructive) { deleteConfirm = true } }
                         }
-                        if let error { Section { Text(error).foregroundStyle(.red); Button("重新读取资料") { Task { do { app.academic = try await app.academicStore.load(); error = "已重新读取；请关闭本草稿后重新打开再保存，草稿仍保留在此。" } catch { self.error = safeMessage(error) } } } } }
+                        if let error { Section { Text(error).foregroundStyle(.red); Button("重新读取资料") { Task { do { app.academic = try await app.academicStore.load(); self.error = "已重新读取；请关闭本草稿后重新打开再保存，草稿仍保留在此。" } catch { self.error = safeMessage(error) } } } } }
                     }.disabled(busy)
                 }
             }.navigationTitle(edit.record == nil ? "添加考试" : "编辑考试").navigationBarTitleDisplayMode(.inline)

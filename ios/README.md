@@ -15,7 +15,7 @@ xcodebuild -project ios/GongXiaoZhu.xcodeproj -scheme GongXiaoZhu \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' build
 ~~~
 
-资源已纳入版本管理。重新从 Android 原图准备资源时，需要 Pillow 12.0.0，执行 python3 ios/scripts/prepare_assets.py。工程生成器只使用 Python 标准库。直接依赖固定为 SwiftSoup 2.14.4、SwiftNIO 2.105.2、SwiftNIO Transport Services 1.28.0；最终解析结果纳入 Package.resolved。
+资源已纳入版本管理。重新从 Android 原图准备资源时，需要 Pillow 12.0.0，执行 python3 ios/scripts/prepare_assets.py。工程生成器只使用 Python 标准库。直接依赖固定为 SwiftSoup 2.14.4、SwiftNIO 2.105.2、SwiftNIO Transport Services 1.28.0；全部六项解析版本纳入 Package.resolved，并保留每项许可证文本。
 
 ## 已接入的源码范围
 
