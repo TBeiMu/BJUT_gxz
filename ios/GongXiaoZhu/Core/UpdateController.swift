@@ -55,6 +55,7 @@ private final class DownloadSink: @unchecked Sendable {
     @ObservationIgnored var automaticUsed = false
     @ObservationIgnored var pendingRoute: NetworkRoute?
     @ObservationIgnored var pendingUpdate: IOSUpdate?
+    @ObservationIgnored var onFinished: (() -> Void)?
     private static var directory: URL { VaultFile.directory.appendingPathComponent("Updates", isDirectory: true) }
     private static var recordURL: URL { directory.appendingPathComponent("record.json") }
     private static var partialURL: URL { directory.appendingPathComponent("download.part") }
@@ -74,7 +75,7 @@ private final class DownloadSink: @unchecked Sendable {
         value.ipaSHA256.matches("[a-f0-9]{64}") && value.sourceCommit.matches("[a-f0-9]{40}") && value.ipaSize > 0 && value.ipaSize <= 200 * 1024 * 1024 &&
         value.minSystemVersion.matches("[0-9]+(?:\\.[0-9]+){0,2}") && value.releaseNotes.count <= 20_000
     }
-    static func verify(_ url: URL, update: IOSUpdate) -> Bool {
+    nonisolated static func verify(_ url: URL, update: IOSUpdate) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }; defer { try? handle.close() }
         var hasher = SHA256(); var count: Int64 = 0
         do { while let bytes = try handle.read(upToCount: 1024 * 1024), !bytes.isEmpty { count += Int64(bytes.count); guard count <= update.ipaSize else { return false }; hasher.update(data: bytes) } } catch { return false }
@@ -95,7 +96,8 @@ private final class DownloadSink: @unchecked Sendable {
                     let next = try JSONDecoder().decode(IOSUpdate.self, from: response.body)
                     guard Self.valid(next) else { throw AppError.response }; try session.lease.requireValid()
                     if next.versionCode > AppInfo.build {
-                        if !downloading { update = next; try persist(next, started: false) }
+                        let old = (try? Data(contentsOf: Self.recordURL)).flatMap { try? JSONDecoder().decode(UpdateRecord.self, from: $0) }
+                        if old?.started != true { update = next; try persist(next, started: false) }
                         let ignored = UserDefaults.standard.integer(forKey: "update.ignoredVersion")
                         if manual || ignored != next.versionCode { offered = next }
                         if manual { status = "发现新版本 \(next.versionName)" }
@@ -108,6 +110,7 @@ private final class DownloadSink: @unchecked Sendable {
     }
     func persist(_ update: IOSUpdate, started: Bool) throws { try VaultFile.atomicWrite(ModelCoding.encode(UpdateRecord(update: update, started: started)), to: Self.recordURL) }
     func ignore(_ next: IOSUpdate) { UserDefaults.standard.set(next.versionCode, forKey: "update.ignoredVersion"); offered = nil }
+    func select(_ next: IOSUpdate) { if update != next { progress = 0; exportURL = nil }; update = next; offered = nil }
     func requestDownload(network: NetworkMonitor) {
         guard !downloading, !checking, let update else { return }
         do {
@@ -130,7 +133,7 @@ private final class DownloadSink: @unchecked Sendable {
         let session = NetworkTransport(route: route); transport = session; downloading = true; exportURL = nil; status = "正在下载未签名 IPA…"
         WorkLifetime.shared.begin("download", title: "下载工小助未签名 IPA", continued: true) { [weak self] in self?.pause() }
         task = Task {
-            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.cancel() } }; defer { timeout.cancel() }
+            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled, self.transport === session { self.pause(); self.status = "下载已超时，分段保留，请手动继续" } }; defer { timeout.cancel() }
             var success = false
             do {
                 let old = (try? Data(contentsOf: Self.recordURL)).flatMap { try? JSONDecoder().decode(UpdateRecord.self, from: $0) }
@@ -154,7 +157,8 @@ private final class DownloadSink: @unchecked Sendable {
                     sink.close()
                 } catch { sink.close(); throw error }
                 try session.lease.requireValid()
-                let verified = await Task.detached { Self.verify(Self.partialURL, update: next) }.value
+                let partial = Self.partialURL
+                let verified = await Task.detached { Self.verify(partial, update: next) }.value
                 try session.lease.requireValid(); guard verified else { try? FileManager.default.removeItem(at: Self.partialURL); throw AppError.validation("IPA 摘要不符，请重新下载") }
                 try? FileManager.default.removeItem(at: Self.readyURL); try FileManager.default.moveItem(at: Self.partialURL, to: Self.readyURL)
                 exportURL = Self.readyURL; progress = next.ipaSize; status = "未签名 IPA 已校验，可分享或导出"; success = true
@@ -162,6 +166,7 @@ private final class DownloadSink: @unchecked Sendable {
             await session.closeAndDrain()
             if transport === session { transport = nil; task = nil; downloading = false }
             WorkLifetime.shared.end("download", success: success)
+            onFinished?()
         }
     }
     func pause() { transport?.cancel(); task?.cancel(); pendingRoute = nil; pendingUpdate = nil; cellularConfirmation = false; if downloading { status = "下载已暂停，可手动继续" } }

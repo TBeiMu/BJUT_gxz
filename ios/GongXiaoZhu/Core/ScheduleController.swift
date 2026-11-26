@@ -6,7 +6,7 @@ extension AppState {
         do {
             let session = ScheduleSession(transport: NetworkTransport(route: try network.route(.internet))); importSession = session; scheduleBusy = true; scheduleStatus = "正在连接学校…"
             importTask = Task {
-                let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.transport.cancel() } }; defer { timeout.cancel() }
+                let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled, self.importSession === session { self.pauseImport(); self.scheduleStatus = "导入已超时，周次进度保留，请手动继续" } }; defer { timeout.cancel() }
                 do { try await handleGate(session.open(), session: session) } catch { if session.transport.lease.isValid { scheduleStatus = safeMessage(error) }; await finishImport(session, success: false) }
             }
         } catch { scheduleStatus = safeMessage(error) }
@@ -41,7 +41,7 @@ extension AppState {
         scheduleSubmitting = true; scheduleBusy = true
         WorkLifetime.shared.begin("schedule", title: "连接学校课表", continued: true) { [weak self] in self?.pauseImport() }
         importTask = Task {
-            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.transport.cancel() } }; defer { timeout.cancel() }
+            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled, self.importSession === session { self.pauseImport(); self.scheduleStatus = "导入已超时，周次进度保留，请手动继续" } }; defer { timeout.cancel() }
             do { try await handleGate(session.submit(token: token, values: values), session: session) }
             catch { if session.transport.lease.isValid { scheduleStatus = safeMessage(error) }; await finishImport(session, success: false) }
         }

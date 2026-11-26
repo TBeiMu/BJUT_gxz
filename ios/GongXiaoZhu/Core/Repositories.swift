@@ -290,7 +290,7 @@ actor ScheduleRepository {
                 guard source == nil, ShanghaiClock.weekday(draft.firstMonday) == 1 else { throw AppError.validation("请选择第一周的周一日期") }
                 let school = !context.creatingTerm && next.selectedLocalTermID == nil ? next.complete : nil
                 local = LocalTerm(firstMonday: draft.firstMonday, weekCount: draft.weekCount, schoolKey: school?.term.key,
-                                  studentID: school?.identity.studentID, adoptOnImport: next.identity == nil && next.localTerms.isEmpty())
+                                  studentID: school?.identity.studentID, adoptOnImport: next.identity == nil && next.localTerms.isEmpty)
             }
             guard var local else { throw AppError.conflict }
             if !context.creatingTerm { guard draft.firstMonday == local.firstMonday, draft.weekCount == local.weekCount else { throw AppError.conflict } }

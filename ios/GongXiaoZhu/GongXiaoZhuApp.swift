@@ -68,11 +68,11 @@ struct RootView: View {
         .sheet(item: $app.schedulePage, onDismiss: { if !app.scheduleSubmitting { app.pauseImport() } }) { page in SchoolPageSheet(page: page).environment(app) }
         .sheet(item: $app.billingPage, onDismiss: { if app.billingPrefill != nil { Task { await app.stopBilling() } } }) { page in SchoolPageSheet(page: page).environment(app) }
         .alert("工小助", isPresented: Binding(get: { app.message != nil }, set: { if !$0 { app.message = nil } })) { Button("知道了") { app.message = nil } } message: { Text(app.message ?? "") }
-        .alert("发现 iOS 新版本", isPresented: Binding(get: { app.updates.offered != nil && !app.hasModal }, set: { if !$0 { app.updates.offered = nil } })) {
+        .alert("发现 iOS 新版本", isPresented: Binding(get: { app.updates.offered != nil && !app.hasModal }, set: { if !$0 { app.updates.offered = nil } }), presenting: app.updates.offered) { next in
             Button("取消更新", role: .cancel) { app.updates.offered = nil }
-            Button("忽略本次更新") { if let next = app.updates.offered { app.updates.ignore(next) } }
-            Button("立即更新") { app.updates.offered = nil; app.open(.update) }
-        } message: { Text(app.updates.offered.map { "\($0.versionName)\n\($0.releaseNotes)\n未签名，签名与安装自行处理" } ?? "") }
+            Button("忽略本次更新") { app.updates.ignore(next) }
+            Button("立即更新") { app.updates.select(next); app.open(.update) }
+        } message: { next in Text("\(next.versionName)\n\(next.releaseNotes)\n未签名，签名与安装自行处理") }
     }
 }
 

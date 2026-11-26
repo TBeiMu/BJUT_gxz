@@ -103,6 +103,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
         do { schedule = try await scheduleStore.load(); scheduleError = nil; selectToday() } catch { scheduleError = safeMessage(error) }
         do { academic = try await academicStore.load(); academicError = nil } catch { academicError = safeMessage(error) }
         await loadCredential(); await restoreBilling()
+        updates.onFinished = { [weak self] in self?.stopMonitoringIfIdle() }
         network.onChange = { [weak self] in self?.networkChanged() }; network.start()
     }
     func selectToday() { selectedWeek = display?.currentWeek() ?? min(max(selectedWeek, 1), display?.weeks.count ?? 1) }

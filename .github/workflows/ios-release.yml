@@ -52,7 +52,7 @@ jobs:
           set -o pipefail
           xcodebuild -project ios/GongXiaoZhu.xcodeproj -scheme GongXiaoZhu \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/gxz-derived" \
+            -derivedDataPath "$RUNNER_TEMP/gxz-derived" -onlyUsePackageVersionsFromResolvedFile \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
             build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
       - name: 打包未签名 IPA 和实际更新信息

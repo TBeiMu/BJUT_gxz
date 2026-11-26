@@ -14,7 +14,7 @@ struct AccountEditor: View {
     @State private var discard = false
     @State private var reveal = false
     @State private var error: String?
-    init(edit: AccountEdit) { self.edit = edit; _draft = State(initialValue: edit.original ?? CampusAccount()) }
+    init(edit: AccountEdit) { self.edit = edit; var draft = edit.original ?? CampusAccount(); if !draft.customLabel && draft.label == draft.username { draft.label = "" }; _draft = State(initialValue: draft) }
     private func normalized(_ account: CampusAccount) -> [String] { [account.username.trimmed, account.label.trimmed.isEmpty ? account.username.trimmed : account.label.trimmed, account.password] }
     private var dirty: Bool { normalized(draft) != normalized(edit.original ?? CampusAccount()) }
     private var valid: Bool { !draft.username.trimmed.isEmpty && !draft.password.isEmpty && (edit.original == nil || dirty) }

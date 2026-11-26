@@ -13,7 +13,7 @@ struct PrivacyCurtain: UIViewRepresentable {
             observers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.cover() } })
             observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.uncover() } })
         }
-        required init?(coder: NSCoder) { nil }
+        required init?(coder: NSCoder) { return nil }
         private func cover() {
             guard curtain == nil, let window else { return }
             let cover = UIView(frame: window.bounds); cover.backgroundColor = UIColor(red: 0.969, green: 0.973, blue: 0.980, alpha: 1); cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
