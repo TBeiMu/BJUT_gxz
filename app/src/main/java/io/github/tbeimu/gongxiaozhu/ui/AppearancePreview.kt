@@ -51,8 +51,7 @@ private fun DrawScope.sampleRect(color: Color, x: Float, y: Float, width: Float,
     drawRoundRect(color, Offset(x, y), Size(width, height), CornerRadius(radius))
 
 private fun DrawScope.sampleCard(palette: GxzPalette, x: Float, y: Float, width: Float, height: Float, radius: Float) {
-    if (palette.glass.alpha == 0f) return
-    sampleRect(palette.glass, x, y, width, height, radius)
+    if (palette.glass.alpha != 0f) sampleRect(palette.glass, x, y, width, height, radius)
     drawRoundRect(palette.glassEdge, Offset(x, y), Size(width, height), CornerRadius(radius),
         style = Stroke(.8f))
 }

@@ -539,7 +539,7 @@ class WallpaperTest {
         }
     }
 
-    @Test fun fullyTransparentCardsMatchBackdropAcrossPaddingAndContent() {
+    @Test fun fullyTransparentCardsKeepOnlyTheirOriginalOutline() {
         val decorate = androidx.compose.runtime.mutableStateOf(true)
         val bitmap = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply {
             eraseColor(android.graphics.Color.rgb(20, 55, 100))
@@ -560,7 +560,7 @@ class WallpaperTest {
                         .testTag("uniform_transparency_card").padding(24.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("考试与成绩", Modifier.fillMaxWidth(), color = gxz.ink)
-                        Text("只有文字与图标，背景统一透明", Modifier.fillMaxWidth(), color = gxz.inkSoft)
+                        Text("文字与图标外，背景统一透明", Modifier.fillMaxWidth(), color = gxz.inkSoft)
                         Spacer(Modifier.height(72.dp))
                     }
                 }
@@ -576,7 +576,21 @@ class WallpaperTest {
             val centerX = (bounds.left + bounds.width * .25f).toInt()
             val centerY = (bounds.top + bounds.height * .8f).toInt()
             assertEquals("$mode card center must reveal the unchanged backdrop", reference.getPixel(centerX, centerY), actual.getPixel(centerX, centerY))
-            assertTrue("$mode full transparency must add no fill, border or shadow anywhere", reference.sameAs(actual))
+            listOf(.1f, .3f, .5f, .7f, .9f).forEach { fraction ->
+                val sampleX = (bounds.left + bounds.width * fraction).toInt()
+                val sampleY = (bounds.top + bounds.height * .8f).toInt()
+                assertEquals("$mode card interior must match the backdrop at ${fraction * 100}%",
+                    reference.getPixel(sampleX, sampleY), actual.getPixel(sampleX, sampleY))
+            }
+            var outlinePixels = 0
+            for (y in 0 until reference.height) for (x in 0 until reference.width) {
+                if (reference.getPixel(x, y) != actual.getPixel(x, y)) {
+                    assertTrue("$mode changed pixels must stay inside the card outline",
+                        x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom)
+                    outlinePixels++
+                }
+            }
+            assertTrue("$mode original hairline outline must remain visible", outlinePixels > 0)
         }
     }
 
