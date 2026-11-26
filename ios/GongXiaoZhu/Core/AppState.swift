@@ -39,6 +39,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     var examEdit: ExamEdit?
     var undo: UndoReceipt?
     var undoDeadline: Date?
+    var undoNotBefore = Date.distantPast
     var campusRunning = false
     var campusConfirmed = false
     var campusMessage = "连接校园 WiFi 后可登录"
@@ -48,6 +49,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     var scheduleStatus = ""
     var schedulePage: SchoolLoginPage?
     var scheduleSubmitting = false
+    var scheduleCommitting = false
     var billing: BillingSnapshot?
     var billingBusy = false
     var billingStatus = ""
@@ -126,9 +128,11 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
         if !automaticBillingUsed && tab == .billing && network.wifiAvailable && accounts.defaultAccount != nil && accountError == nil { automaticBillingUsed = true; refreshBilling() }
         updates.automaticCheck(network: network, active: active)
     }
-    func offerUndo(_ receipt: UndoReceipt?) { undoTimer?.cancel(); undo = receipt; undoDeadline = nil }
+    func offerUndo(_ receipt: UndoReceipt?) { undoTimer?.cancel(); undo = receipt; undoDeadline = nil; undoNotBefore = Date().addingTimeInterval(0.4) }
     func activateUndo() async {
         guard let receipt = undo, !hasModal, active else { return }
+        if undoNotBefore > Date() { try? await Task.sleep(for: .seconds(undoNotBefore.timeIntervalSinceNow)) }
+        guard undo?.id == receipt.id, !hasModal, active, !Task.isCancelled else { return }
         let seconds = UIAccessibility.isVoiceOverRunning ? 30.0 : 10.0
         let deadline: Date?
         if receipt.academic { deadline = await academicStore.activateUndo(receipt.id, seconds: seconds) }

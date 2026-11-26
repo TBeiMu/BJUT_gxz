@@ -207,7 +207,7 @@ actor ScheduleRepository {
         undo = nil; var next = try current(); try lease.requireValid()
         if let existing = next.identity, existing.studentID != identity.studentID { throw AppError.validation("学校返回学号与课表绑定不一致，请先确认更换课表账号") }
         next.identity = identity
-        if next.pending?.identity.studentID != identity.studentID || next.pending?.term != term { next.pending = PendingSchedule(identity: identity, term: term) }
+        if next.pending?.identity.studentID != identity.studentID || next.pending?.term.key != term.key || next.pending?.term.weekCount != term.weekCount { next.pending = PendingSchedule(identity: identity, term: term) }
         return try write(next, lease: lease)
     }
     func append(_ week: ScheduleWeek, lease: OperationLease) throws -> ScheduleData {

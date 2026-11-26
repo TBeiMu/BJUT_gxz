@@ -18,19 +18,21 @@ import BackgroundTasks
                         self.ongoing[kind] = continued
                         continued.progress.totalUnitCount = 1000
                         continued.progress.completedUnitCount = 1
-                        continued.expirationHandler = { Task { @MainActor in cancel() } }
+                        continued.expirationHandler = { Task { @MainActor in cancel(); self.end(kind, success: false) } }
                     }
                 }
             }
         }
     }
     func begin(_ kind: String, title: String, continued: Bool = false, expiration: @escaping () -> Void) {
+        if expires[kind] != nil { expires[kind] = expiration; return }
         end(kind, success: false)
         expires[kind] = expiration
         finite[kind] = UIApplication.shared.beginBackgroundTask(withName: title) { [weak self] in
             Task { @MainActor in
-                guard let self, self.ongoing[kind] == nil else { return }
-                self.expires[kind]?(); self.end(kind, success: false)
+                guard let self else { return }
+                if let token = self.finite.removeValue(forKey: kind), token != .invalid { UIApplication.shared.endBackgroundTask(token) }
+                if self.ongoing[kind] == nil { self.expires[kind]?(); self.end(kind, success: false) }
             }
         }
         if #available(iOS 26.0, *), continued {

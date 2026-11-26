@@ -5,6 +5,8 @@ private struct CourseSelection: Identifiable { var id = UUID(); var courses: [Co
 struct ScheduleHome: View {
     @Environment(AppState.self) var app
     @Environment(\.dynamicTypeSize) var typeSize
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @State private var now = Date()
     @State private var weekPicker = false
     @State private var detail: CourseSelection?
     var body: some View {
@@ -13,7 +15,7 @@ struct ScheduleHome: View {
             if let error = app.scheduleError { ScrollView { StorageNotice(module: "schedule", text: error).padding(20) } }
             else if let display = app.display {
                 if app.wholeWeek {
-                    WeekPager(week: app.selectedWeek, count: display.weeks.count, change: { app.selectedWeek = $0 }) { week in
+                    WeekPager(week: app.selectedWeek, count: display.weeks.count, animated: !reduceMotion, change: { app.selectedWeek = $0 }) { week in
                         AnyView(WeekGrid(week: display.weeks[week - 1], select: { detail = CourseSelection(courses: $0) }).environment(app))
                     }
                 } else {
@@ -32,6 +34,11 @@ struct ScheduleHome: View {
                 Button { app.setWholeWeek(!app.wholeWeek) } label: { Label(app.wholeWeek ? "今日" : "整周", systemImage: app.wholeWeek ? "list.bullet" : "rectangle.split.3x3") }.buttonStyle(.borderedProminent)
             }.padding(.horizontal, 20).padding(.bottom, 8)
         }.navigationBarHidden(true)
+            .task(id: app.active && app.tab == .schedule && (app.paths[.schedule] ?? []).isEmpty) {
+                guard app.active, app.tab == .schedule, (app.paths[.schedule] ?? []).isEmpty else { return }
+                while !Task.isCancelled { let previousDay = ShanghaiClock.day(now); now = Date(); if previousDay != ShanghaiClock.day(now) { app.selectToday() }; try? await Task.sleep(for: .seconds(60)) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in let previousDay = ShanghaiClock.day(now); now = Date(); if previousDay != ShanghaiClock.day(now) { app.selectToday() } }
             .sheet(isPresented: $weekPicker) { NavigationStack { ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 78))], spacing: 12) { ForEach(1...(app.display?.weeks.count ?? 1), id: \.self) { week in Button("第 \(week) 周") { app.selectedWeek = week; weekPicker = false }.buttonStyle(.borderedProminent).tint(week == app.selectedWeek ? app.appearance.accent : .gray) } }.padding() }.navigationTitle("选择周次").toolbar { Button("完成") { weekPicker = false } } }.presentationDetents([.medium, .large]) }
             .sheet(item: $detail) { selection in CourseDetails(courses: selection.courses).environment(app) }
     }
@@ -47,11 +54,11 @@ struct ScheduleHome: View {
                 } label: { Image(systemName: "plus").font(.title3).frame(width: 44, height: 44).background(.white.opacity(0.5), in: Circle()) }.accessibilityLabel("课表操作")
             }
             TimelineView(.periodic(from: .now, by: 60)) { context in Text(ShanghaiClock.format(context.date, "M 月 d 日 EEEE")).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
-            HStack { Text(app.campusMessage).lineLimit(2); if app.campusRunning { BrandLoader(size: 16) } }.font(.caption).foregroundStyle(.secondary).frame(minHeight: 32, alignment: .topLeading)
+            HStack { Text(app.campusMessage).lineLimit(2); if app.campusRunning { BrandLoader(size: 16, motion: .signal) } }.font(.caption).foregroundStyle(.secondary).frame(minHeight: 32, alignment: .topLeading)
         }.padding(.horizontal, 22).padding(.top, 10)
     }
     @ViewBuilder private func today(_ week: ScheduleWeek) -> some View {
-        let weekday = ShanghaiClock.weekday(ShanghaiClock.day()) ?? 1
+        let weekday = ShanghaiClock.weekday(ShanghaiClock.day(now)) ?? 1
         let date = week.dates[weekday - 1]
         let courses = week.courses.filter { $0.date == date }.sorted { ($0.lessons.first ?? 0) < ($1.lessons.first ?? 0) }
         HStack { Text(date == ShanghaiClock.day() ? "今日课程" : date).font(.headline); Spacer(); Button { app.selectedWeek = max(1, app.selectedWeek - 1) } label: { Image(systemName: "chevron.left").frame(width: 35, height: 35) }.disabled(app.selectedWeek <= 1); Button { app.selectedWeek = min(app.display?.weeks.count ?? 1, app.selectedWeek + 1) } label: { Image(systemName: "chevron.right").frame(width: 35, height: 35) }.disabled(app.selectedWeek >= (app.display?.weeks.count ?? 1)) }
@@ -60,9 +67,18 @@ struct ScheduleHome: View {
             Button { detail = CourseSelection(courses: [course]) } label: {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) { Text(LessonTimes.start(course.lessons.min() ?? 0) ?? "—").font(.headline.monospacedDigit()); Text(LessonTimes.end(course.lessons.max() ?? 0) ?? "—").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }.frame(width: 55, alignment: .leading).padding(.top, 14)
-                    AppCard { VStack(alignment: .leading, spacing: 8) { Text(course.name).font(.headline); if !course.location.isEmpty { Label(course.location, systemImage: "mappin").font(.subheadline).foregroundStyle(.secondary) }; Text(LessonTimes.label(course.lessons)).font(.caption).foregroundStyle(.secondary) } }
+                    AppCard { VStack(alignment: .leading, spacing: 8) { Text(course.name).font(.headline); if !course.location.isEmpty { Label(course.location, systemImage: "mappin").font(.subheadline).foregroundStyle(.secondary) }; Text(LessonTimes.label(course.lessons)).font(.caption).foregroundStyle(.secondary); liveCourse(course) } }
                 }.foregroundStyle(.primary)
             }.buttonStyle(.plain)
+        }
+    }
+    @ViewBuilder private func liveCourse(_ course: Course) -> some View {
+        let intervals = course.lessons.compactMap { lesson -> (Date, Date)? in
+            guard let start = LessonTimes.start(lesson), let end = LessonTimes.end(lesson), let first = ShanghaiClock.parse(course.date + " " + start, "yyyy-MM-dd HH:mm"), let last = ShanghaiClock.parse(course.date + " " + end, "yyyy-MM-dd HH:mm") else { return nil }; return (first, last)
+        }
+        if let current = intervals.first(where: { now >= $0.0 && now <= $0.1 }) {
+            ProgressView(value: now.timeIntervalSince(current.0), total: current.1.timeIntervalSince(current.0)).tint(app.appearance.accent)
+            Text("正在上课 · 本节还剩 \(max(1, Int(ceil(current.1.timeIntervalSince(now) / 60)))) 分钟").font(.caption).foregroundStyle(app.appearance.accent)
         }
     }
 }
@@ -107,6 +123,7 @@ struct WeekGrid: View {
 struct WeekPager: UIViewControllerRepresentable {
     var week: Int
     var count: Int
+    var animated = true
     var change: (Int) -> Void
     var content: (Int) -> AnyView
     func makeUIViewController(context: Context) -> PagerController { let controller = PagerController(); controller.owner = self; return controller }
@@ -117,6 +134,7 @@ struct WeekPager: UIViewControllerRepresentable {
         var hosts: [UIHostingController<AnyView>] = []
         var base = 0
         var pending: Int?
+        var programmaticGoal: Int?
         var oldWidth: CGFloat = 0
         override func viewDidLoad() {
             super.viewDidLoad(); view.backgroundColor = .clear; scroll.backgroundColor = .clear; scroll.delegate = self; scroll.isPagingEnabled = true; scroll.showsHorizontalScrollIndicator = false; scroll.alwaysBounceHorizontal = false; scroll.directionalLockEnabled = true; scroll.contentInsetAdjustmentBehavior = .never; view.addSubview(scroll)
@@ -133,15 +151,21 @@ struct WeekPager: UIViewControllerRepresentable {
         func fill() { guard hosts.count == 3 else { return }; for (index, host) in hosts.enumerated() { let number = base + index - 1; host.rootView = (1...owner.count).contains(number) ? owner.content(number) : AnyView(Color.clear) } }
         func refreshIfNeeded() {
             guard isViewLoaded, oldWidth > 0 else { return }
+            if programmaticGoal != nil && programmaticGoal != owner.week { programmaticGoal = owner.week }
             if base == 0 { base = owner.week; fill() }
-            else if pending == nil && base != owner.week && !scroll.isDragging { base = owner.week; fill(); scroll.setContentOffset(CGPoint(x: oldWidth, y: 0), animated: false) }
+            else if base != owner.week && !scroll.isDragging && programmaticGoal == nil && pending == nil {
+                if owner.animated { programmaticGoal = owner.week; stepToGoal() }
+                else { base = owner.week; fill(); scroll.setContentOffset(CGPoint(x: oldWidth, y: 0), animated: false) }
+            }
             else if pending == nil && !scroll.isDragging && !scroll.isDecelerating { fill() }
         }
         func rebase() {
             guard let target = pending else { return }; let offset = scroll.contentOffset.x - CGFloat(target - base) * oldWidth
             base = target; pending = nil; fill(); scroll.setContentOffset(CGPoint(x: offset, y: 0), animated: false)
         }
-        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { rebase() }
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { rebase(); programmaticGoal = nil; owner.change(base) }
+        func stepToGoal() { guard let goal = programmaticGoal, goal != base else { programmaticGoal = nil; return }; pending = base + (goal > base ? 1 : -1); scroll.setContentOffset(CGPoint(x: CGFloat(pending! - base + 1) * oldWidth, y: 0), animated: true) }
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { rebase(); scroll.setContentOffset(CGPoint(x: oldWidth, y: 0), animated: false); if programmaticGoal == base { programmaticGoal = nil } else { stepToGoal() } }
         func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
             let delta = scrollView.contentOffset.x - oldWidth
             let direction = abs(delta) > oldWidth * 0.18 || abs(velocity.x) > 0.3 ? (delta == 0 ? (velocity.x > 0 ? 1 : -1) : (delta > 0 ? 1 : -1)) : 0

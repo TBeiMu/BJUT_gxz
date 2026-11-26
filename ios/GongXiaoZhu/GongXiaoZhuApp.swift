@@ -19,7 +19,7 @@ struct RootView: View {
                     NavigationStack(path: Binding(get: { app.paths[tab] ?? [] }, set: { app.paths[tab] = $0 })) {
                         Group {
                             switch tab { case .schedule: ScheduleHome(); case .billing: BillingPage(); case .mine: MinePage() }
-                        }.navigationDestination(for: AppPage.self) { page in
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity).background { AppBackground() }.navigationDestination(for: AppPage.self) { page in
                             Group {
                                 switch page {
                                 case .campus: CampusPage()
@@ -31,17 +31,18 @@ struct RootView: View {
                                 case .update: UpdatePage()
                                 case .about: AboutPage()
                                 }
-                            }.toolbar(.visible, for: .navigationBar).toolbarBackground(.hidden, for: .navigationBar)
+                            }.frame(maxWidth: .infinity, maxHeight: .infinity).background { AppBackground() }.toolbar(.visible, for: .navigationBar).toolbarBackground(.hidden, for: .navigationBar)
                         }.toolbarBackground(.hidden, for: .navigationBar)
                     }.background(.clear).opacity(app.tab == tab ? 1 : 0).allowsHitTesting(app.tab == tab).accessibilityHidden(app.tab != tab)
                 }
             }
             if splash {
                 Color(hex: 0xF7F8FA).ignoresSafeArea()
-                VStack(spacing: 22) { BrandLoader(size: 100); Text("工小助").font(.system(size: 28, weight: .semibold)); Text("让校园生活轻松一点").font(.subheadline).foregroundStyle(.secondary) }.foregroundStyle(Color(hex: 0x1B1D22))
+                VStack(spacing: 22) { BrandLoader(size: 100, motion: .week); Text("工小助").font(.system(size: 28, weight: .semibold)); Text("让校园生活轻松一点").font(.subheadline).foregroundStyle(.secondary) }.foregroundStyle(Color(hex: 0x1B1D22))
             }
             if scenePhase != .active { Color(hex: 0xF7F8FA).ignoresSafeArea(); Image("LaunchMark").resizable().scaledToFit().frame(width: 90, height: 90) }
         }
+        .background { PrivacyCurtain().frame(width: 0, height: 0) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 if let receipt = app.undo, !app.hasModal {
@@ -57,7 +58,7 @@ struct RootView: View {
                 }.background(.white, in: Capsule()).overlay(Capsule().strokeBorder(.black.opacity(0.06), lineWidth: 0.5)).padding(.horizontal, 32).padding(.bottom, 5)
             }.opacity(splash ? 0 : 1)
         }
-        .task { await app.start(); try? await Task.sleep(for: .milliseconds(reduceMotion ? 200 : 1050)); withAnimation(.easeOut(duration: 0.25)) { splash = false } }
+        .task { await app.start(); try? await Task.sleep(for: .milliseconds(reduceMotion ? 200 : 1600)); withAnimation(.easeOut(duration: 0.25)) { splash = false } }
         .onChange(of: scenePhase) { _, phase in if phase == .active { app.foreground() } else if phase == .background { app.background() } }
         .onChange(of: app.hasModal) { _, presented in if !presented { Task { await app.activateUndo() } } }
         .sheet(item: $app.accountEdit) { edit in AccountEditor(edit: edit).environment(app) }
@@ -72,22 +73,6 @@ struct RootView: View {
             Button("忽略本次更新") { if let next = app.updates.offered { app.updates.ignore(next) } }
             Button("立即更新") { app.updates.offered = nil; app.open(.update) }
         } message: { Text(app.updates.offered.map { "\($0.versionName)\n\($0.releaseNotes)\n未签名，签名与安装自行处理" } ?? "") }
-    }
-}
-
-struct BrandLoader: View {
-    var size: CGFloat = 22
-    @Environment(\.accessibilityReduceMotion) var reduceMotion
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            let phase = sin(time * .pi * 2 / 1.8)
-            ZStack {
-                RoundedRectangle(cornerRadius: size * 0.037).fill(Color.primary).frame(width: size * 0.39, height: size * 0.107).offset(y: -size * 0.196)
-                RoundedRectangle(cornerRadius: size * 0.037).fill(Color(hex: 0xE5482E)).frame(width: size * 0.111, height: size * 0.232).offset(y: reduceMotion ? 0 : phase * size * 0.04)
-                RoundedRectangle(cornerRadius: size * 0.037).fill(Color.primary).frame(width: size * 0.5, height: size * 0.107).offset(y: size * 0.196)
-            }.frame(width: size, height: size).rotationEffect(.degrees(reduceMotion ? 0 : phase * 4))
-        }.accessibilityLabel("正在处理")
     }
 }
 

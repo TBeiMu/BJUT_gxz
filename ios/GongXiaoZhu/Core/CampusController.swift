@@ -51,6 +51,10 @@ extension AppState {
     }
     func cancelName() { nameTransport?.cancel(); nameTask?.cancel() }
     func waitAccountTasks() async { await waitCampus(); cancelName(); await nameTask?.value; await stopBilling() }
+    func beginAccountEdit(_ id: String? = nil) async {
+        await waitAccountTasks()
+        do { let original: CampusAccount?; if let id { original = try await accountStore.credentials(id) } else { original = nil }; accountEdit = AccountEdit(original: original) } catch { notify(error) }
+    }
     func saveAccount(_ draft: CampusAccount, original: CampusAccount?) async -> Bool {
         await waitAccountTasks()
         do {

@@ -130,6 +130,7 @@ private final class DownloadSink: @unchecked Sendable {
         let session = NetworkTransport(route: route); transport = session; downloading = true; exportURL = nil; status = "正在下载未签名 IPA…"
         WorkLifetime.shared.begin("download", title: "下载工小助未签名 IPA", continued: true) { [weak self] in self?.pause() }
         task = Task {
+            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.cancel() } }; defer { timeout.cancel() }
             var success = false
             do {
                 let old = (try? Data(contentsOf: Self.recordURL)).flatMap { try? JSONDecoder().decode(UpdateRecord.self, from: $0) }

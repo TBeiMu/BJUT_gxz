@@ -34,7 +34,7 @@ struct AppearancePreferences: Codable, Equatable {
         return Self.gradients[preferences.preset]
     }
     func importPhoto(_ data: Data) async {
-        guard data.count <= 30 * 1024 * 1024, let original = UIImage(data: data), original.size.width > 0, original.size.height > 0 else { error = "图片无法读取或文件过大"; return }
+        guard data.count <= 30 * 1024 * 1024, let original = UIImage(data: data), original.size.width > 0, original.size.height > 0, original.size.width * original.size.height <= 60_000_000 else { error = "图片无法读取或文件过大"; return }
         let ratio = min(1, 2400 / max(original.size.width, original.size.height))
         let size = CGSize(width: original.size.width * ratio, height: original.size.height * ratio)
         let image = UIGraphicsImageRenderer(size: size).image { _ in original.draw(in: CGRect(origin: .zero, size: size)) }

@@ -6,6 +6,7 @@ extension AppState {
         do {
             let session = ScheduleSession(transport: NetworkTransport(route: try network.route(.internet))); importSession = session; scheduleBusy = true; scheduleStatus = "正在连接学校…"
             importTask = Task {
+                let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.transport.cancel() } }; defer { timeout.cancel() }
                 do { try await handleGate(session.open(), session: session) } catch { if session.transport.lease.isValid { scheduleStatus = safeMessage(error) }; await finishImport(session, success: false) }
             }
         } catch { scheduleStatus = safeMessage(error) }
@@ -28,7 +29,9 @@ extension AppState {
                 schedule = try await scheduleStore.append(week, lease: session.transport.lease)
                 WorkLifetime.shared.progress("schedule", fraction: Double(number) / Double(term.weekCount))
             }
-            schedule = try await scheduleStore.finish(lease: session.transport.lease); selectToday(); scheduleStatus = "整学期课表已保存"
+            scheduleCommitting = true
+            do { schedule = try await scheduleStore.finish(lease: session.transport.lease) } catch { scheduleCommitting = false; throw error }
+            scheduleCommitting = false; selectToday(); scheduleStatus = "整学期课表已保存"
             if accountError == nil, let next = try? await accountStore.fillName(identity, lease: session.transport.lease) { accounts = next }
             await finishImport(session, success: true)
         }
@@ -38,17 +41,18 @@ extension AppState {
         scheduleSubmitting = true; scheduleBusy = true
         WorkLifetime.shared.begin("schedule", title: "连接学校课表", continued: true) { [weak self] in self?.pauseImport() }
         importTask = Task {
+            let timeout = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { session.transport.cancel() } }; defer { timeout.cancel() }
             do { try await handleGate(session.submit(token: token, values: values), session: session) }
             catch { if session.transport.lease.isValid { scheduleStatus = safeMessage(error) }; await finishImport(session, success: false) }
         }
     }
     func finishImport(_ session: ScheduleSession, success: Bool) async {
         await session.close(); guard importSession === session else { return }
-        importSession = nil; importTask = nil; scheduleBusy = false; scheduleSubmitting = false; schedulePage = nil
+        importSession = nil; importTask = nil; scheduleBusy = false; scheduleSubmitting = false; scheduleCommitting = false; schedulePage = nil
         WorkLifetime.shared.end("schedule", success: success); stopMonitoringIfIdle()
     }
     func pauseImport() {
-        guard let session = importSession else { return }; session.transport.cancel(); importTask?.cancel(); schedulePage = nil; scheduleStatus = "已暂停，已完成的周次保留；继续时需重新登录"
+        guard let session = importSession, !scheduleCommitting else { return }; session.transport.cancel(); importTask?.cancel(); schedulePage = nil; scheduleStatus = "已暂停，已完成的周次保留；继续时需重新登录"
         if !scheduleBusy { Task { await finishImport(session, success: false) } }
     }
     func clearPending() async { pauseImport(); await importTask?.value; do { schedule = try await scheduleStore.cancelPending() } catch { notify(error) } }
@@ -56,6 +60,7 @@ extension AppState {
     func selectTerm(_ id: String?) async { invalidateUndo(); do { schedule = try await scheduleStore.selectLocal(id); selectToday() } catch { notify(error) } }
     func deleteLocalTerm(_ id: String) async { invalidateUndo(); do { schedule = try await scheduleStore.deleteLocal(id); selectToday() } catch { notify(error) } }
     func editCourse(_ course: Course? = nil, newTerm: Bool = false, deleteOnly: Bool = false) async {
+        pauseImport(); await importTask?.value
         invalidateUndo()
         do { courseEdit = try await scheduleStore.editor(course: course, week: selectedWeek, weekday: ShanghaiClock.weekday(ShanghaiClock.day()) ?? 1, newTerm: newTerm, deleteOnly: deleteOnly) } catch { notify(error) }
     }
