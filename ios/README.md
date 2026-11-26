@@ -1,6 +1,6 @@
 # 工小助 iOS 移植版
 
-目标版本 **0.5.9／40**，iOS 17 及以上，iPhone 与 iPad。原生 SwiftUI 页面，Network.framework 绑定实体接口，SwiftNIO HTTP，SwiftSoup 解析；凭据和资料由各模块独立 Keychain 密钥配合 CryptoKit AES-GCM 加密。
+版本 **0.5.9／40**，最低 iOS 17，面向 iPhone 与 iPad，已发布未签名 IPA。原生 SwiftUI 页面，Network.framework 绑定实体接口，SwiftNIO HTTP，SwiftSoup 解析；凭据和资料由各模块独立 Keychain 密钥配合 CryptoKit AES-GCM 加密。
 
 **未签名、未执行功能测试，签名与安装自行处理。** 不提供 macOS App，不使用 Android 检查结果作为 iOS 可用性证明。
 
@@ -44,4 +44,6 @@ xcodebuild -project ios/GongXiaoZhu.xcodeproj -scheme GongXiaoZhu \
 
 ## 发布
 
-沿用现有 v0.5.9 Release，新增三个独立附件：gongxiaozhu-ios-unsigned.ipa、SHA256SUMS-ios.txt、update-ios.json。不会移动原标签或替换 Android 附件。实际源码、构建及公开摘要记录在 [iOS 交付记录](../docs/ios/交付记录.md)。
+2026 年 11 月 27 日 00:15:36（上海时间）已向现有 v0.5.9 Release 追加三个独立附件：gongxiaozhu-ios-unsigned.ipa、SHA256SUMS-ios.txt、update-ios.json。IPA 为 6,928,647 字节，源码 `216d650f58ea01e50c111de8fcf507ae9f7f33cb`；Release／arm64 编译、包结构及公开文件完整性核对通过。原 Android 三个附件、发布说明和原标签未变。实际构建、摘要及未测试边界记录在 [iOS 交付记录](../docs/ios/交付记录.md)。
+
+[下载未签名 IPA](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/gongxiaozhu-ios-unsigned.ipa) · [同版本 Release](https://github.com/TBeiMu/BJUT_gxz/releases/tag/v0.5.9)。

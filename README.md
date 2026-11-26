@@ -1,6 +1,6 @@
 # 工小助
 
-北京工业大学 Android 校园助手。整学期课表、考试与成绩管理、校园网登录和资费查询集中在一个 App 中。
+北京工业大学校园助手。整学期课表、考试与成绩管理、校园网登录和资费查询集中在一个 App 中。
 
 **v0.5.9 正式版 · Android 12 及以上 · versionCode 40**
 
@@ -14,7 +14,9 @@ v0.5.9 延续考试／成绩管理及个性化设置，卡片通透度现为 2%�
 
 ## 下载与安装
 
-iOS 移植版使用相同的 0.5.9／40，支持 iOS 17 及以上；当前正在编译打包，将在同一 v0.5.9 Release 提供独立未签名 IPA。**未签名、未执行功能测试，签名与安装自行处理。** iOS 实现与平台差异见 [iOS 说明](ios/README.md)，实际交付状态见 [iOS 交付记录](docs/ios/交付记录.md)。以下安装与既有验证说明仍针对 Android。
+iOS 移植版使用相同的 0.5.9／40，最低系统 iOS 17，面向 iPhone／iPad；已于 2026 年 11 月 27 日追加到同一 v0.5.9 Release。**未签名、未执行功能测试，签名与安装自行处理。** 已完成编译及文件完整性核对，源码范围与平台差异见 [iOS 说明](ios/README.md)，构建源码和公开摘要见 [iOS 交付记录](docs/ios/交付记录.md)。以下安装与既有验证说明仍针对 Android。
+
+[下载 iOS 未签名 IPA](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/gongxiaozhu-ios-unsigned.ipa) · [iOS SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/SHA256SUMS-ios.txt) · [iOS 更新元数据](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/update-ios.json)
 
 [下载 v0.5.9 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/SHA256SUMS.txt)
 
