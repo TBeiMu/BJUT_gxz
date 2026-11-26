@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import re
@@ -33,9 +34,22 @@ def main():
     with tempfile.TemporaryDirectory(prefix='gxz-ipa-') as temporary:
         payload = Path(temporary) / 'Payload'; payload.mkdir()
         shutil.copytree(app, payload / '工小助.app', symlinks=True)
-        subprocess.run(['ditto', '-c', '-k', '--keepParent', str(payload), str(ipa)], check=True)
+        # Write UTF-8 ZIP names explicitly; ditto omits the language flag for Chinese paths.
+        with zipfile.ZipFile(ipa, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+            for path in [payload, *sorted(payload.rglob('*'))]:
+                name = path.relative_to(payload.parent).as_posix()
+                if path.is_symlink():
+                    entry = zipfile.ZipInfo(name)
+                    entry.create_system = 3
+                    entry.external_attr = path.lstat().st_mode << 16
+                    entry.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(entry, os.readlink(path).encode('utf-8'))
+                else:
+                    archive.write(path, name)
     with zipfile.ZipFile(ipa) as archive:
         if 'Payload/工小助.app/Info.plist' not in archive.namelist() or f'Payload/工小助.app/{info["CFBundleExecutable"]}' not in archive.namelist(): raise SystemExit('IPA Payload 结构错误')
+        if archive.testzip() is not None: raise SystemExit('IPA ZIP 完整性错误')
+        if not archive.getinfo(f'Payload/工小助.app/{info["CFBundleExecutable"]}').external_attr >> 16 & 0o111: raise SystemExit('IPA 主程序缺少执行权限')
     digest = hashlib.sha256(ipa.read_bytes()).hexdigest()
     (output / 'SHA256SUMS-ios.txt').write_text(f'{digest}  {ipa.name}\n', encoding='utf-8')
     metadata = {'platform': 'ios', 'versionName': info['CFBundleShortVersionString'], 'versionCode': int(info['CFBundleVersion']), 'minSystemVersion': info['MinimumOSVersion'], 'ipaURL': f'https://github.com/TBeiMu/BJUT_gxz/releases/download/{args.tag}/{ipa.name}', 'ipaSize': ipa.stat().st_size, 'ipaSHA256': digest, 'releaseTag': args.tag, 'releaseNotes': Path(args.notes).read_text(encoding='utf-8'), 'sourceCommit': args.source, 'unsigned': True}
