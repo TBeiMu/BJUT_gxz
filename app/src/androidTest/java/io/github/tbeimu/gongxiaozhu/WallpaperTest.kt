@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -537,6 +539,68 @@ class WallpaperTest {
                 }
             preview("transparency-${mode.name}-100")
         }
+    }
+
+    @Test fun everyTransparencyUsesOneUniformFillAcrossTheWholeCard() {
+        val useGlass = androidx.compose.runtime.mutableStateOf(false)
+        val bitmap = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(20, 55, 100))
+            android.graphics.Canvas(this).drawRect(100f, 0f, 200f, 400f, android.graphics.Paint().apply {
+                color = android.graphics.Color.rgb(245, 205, 125)
+            })
+        }
+        val local = WallpaperState().apply {
+            image = bitmap.asImageBitmap()
+            preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoBlurDp = 0,
+                photoName = "wallpaper.jpg", themeMode = AppThemeMode.LIGHT)
+        }
+        compose.runOnUiThread { WallpaperTestActivity.scene = { GongXiaoZhuTheme(local.preferences) {
+            AppBackdrop(local) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    // Reference: the chosen fill painted exactly once, without an elevation layer.
+                    val surface = if (useGlass.value) Modifier.glass(gxz) else Modifier.clip(CardShape)
+                        .background(gxz.glass).border(.7.dp, gxz.glassEdge, CardShape)
+                    Column(Modifier.padding(24.dp).fillMaxWidth().then(surface)
+                        .testTag("uniform_partial_card").padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("考试与成绩", Modifier.fillMaxWidth(), color = gxz.ink)
+                        Text("卡片通透度连续变化", Modifier.fillMaxWidth(), color = gxz.inkSoft)
+                        Spacer(Modifier.height(72.dp))
+                    }
+                }
+            }
+        } } }
+        val failures = mutableListOf<String>()
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
+            for (transparency in 2..100 step 2) {
+                compose.runOnIdle {
+                    local.preferences = local.preferences.copy(themeMode = mode, cardOpacityPercent = 100 - transparency)
+                    useGlass.value = false
+                }
+                val reference = compose.onRoot().captureToImage().asAndroidBitmap()
+                compose.runOnIdle { useGlass.value = true }
+                val actual = compose.onRoot().captureToImage().asAndroidBitmap()
+                if (transparency in listOf(2, 4, 16, 32, 34, 36, 50, 66, 80, 98, 100)) {
+                    preview("uniform-partial-${mode.name}-$transparency")
+                }
+                val bounds = compose.onNodeWithTag("uniform_partial_card").fetchSemanticsNode().boundsInRoot
+                var different = 0
+                for (fx in listOf(.1f, .3f, .5f, .7f, .9f)) {
+                    for (fy in listOf(.1f, .25f, .5f, .75f, .9f)) {
+                        val x = (bounds.left + bounds.width * fx).toInt()
+                        val y = (bounds.top + bounds.height * fy).toInt()
+                        val expected = reference.getPixel(x, y)
+                        val rendered = actual.getPixel(x, y)
+                        if (listOf(0, 8, 16).any { shift ->
+                            abs(((expected shr shift) and 255) - ((rendered shr shift) and 255)) > 1
+                        }) different++
+                    }
+                }
+                if (different > 0) failures += "$mode $transparency%: $different interior samples differ from a single fill"
+                reference.recycle(); actual.recycle()
+            }
+        }
+        assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
 
     @Test fun fullyTransparentCardsKeepOnlyTheirOriginalOutline() {

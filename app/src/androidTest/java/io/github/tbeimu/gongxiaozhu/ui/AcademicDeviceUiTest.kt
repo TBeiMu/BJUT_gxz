@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -109,6 +110,42 @@ class AcademicDeviceUiTest {
             else if (compose.onAllNodesWithTag("academic_details_overlay").fetchSemanticsNodes().isNotEmpty())
                 compose.onNodeWithTag("academic_details_overlay") else compose.onRoot()
             target.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test fun examsAndGradesStayReadableAcrossIntermediateCardTransparency() {
+        val data = fixture()
+        val showGrades = mutableStateOf(false)
+        val wallpaper = WallpaperState().apply {
+            image = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply {
+                eraseColor(android.graphics.Color.rgb(20, 55, 100))
+                android.graphics.Canvas(this).drawRect(100f, 0f, 200f, 400f, android.graphics.Paint().apply {
+                    color = android.graphics.Color.rgb(245, 205, 125)
+                })
+            }.asImageBitmap()
+            preferences = WallpaperPreferences(mode = WallpaperMode.PHOTO, photoBlurDp = 0, photoName = "wallpaper.jpg")
+        }
+        compose.setContent {
+            GongXiaoZhuTheme(wallpaper.preferences) { AppBackdrop(wallpaper) {
+                Column(Modifier.fillMaxSize()) {
+                    key(showGrades.value) {
+                        AcademicContentBody(showGrades.value, data, AcademicActions(), Modifier.weight(1f), now)
+                    }
+                }
+            } }
+        }
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
+            for (transparency in listOf(34, 66, 98, 100)) {
+                for (grades in listOf(false, true)) {
+                    compose.runOnIdle {
+                        wallpaper.preferences = wallpaper.preferences.copy(themeMode = mode, cardOpacityPercent = 100 - transparency)
+                        showGrades.value = grades
+                    }
+                    reach(if (grades) "academic_grades" else "academic_exams", hasText(course))
+                    readable(course)
+                    preview("transparency-${mode.name}-$transparency-${if (grades) "grades" else "exams"}")
+                }
+            }
         }
     }
 

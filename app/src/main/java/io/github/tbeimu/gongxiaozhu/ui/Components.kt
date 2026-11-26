@@ -41,11 +41,12 @@ import androidx.compose.ui.unit.dp
 internal val CardShape = RoundedCornerShape(22.dp)
 internal val TileShape = RoundedCornerShape(18.dp)
 
-/** Card fill and shadow disappear at full transparency; keep the hairline around the card. */
+/** Paint translucent cards once over the backdrop, keeping their original hairline. */
 internal fun Modifier.glass(palette: GxzPalette, shape: Shape = CardShape, strong: Boolean = false): Modifier {
-    // Elevation can tint a transparent card's interior. Retain its original outline only.
+    // Android elevation leaves rectangular interior artifacts at partial alpha too.
+    // Reserve it for the independent opaque surfaces, such as the bottom dock.
     if (!strong && palette.glass.alpha == 0f) return clip(shape).border(.7.dp, palette.glassEdge, shape)
-    return (if (palette.dark) this else shadow(if (strong) 10.dp else 6.dp, shape, clip = false,
+    return (if (palette.dark || !strong) this else shadow(10.dp, shape, clip = false,
         ambientColor = Color(0x14000000), spotColor = Color(0x1A000000)))
         .clip(shape).background(if (strong) palette.glassStrong else palette.glass)
         .border(.7.dp, palette.glassEdge, shape)
