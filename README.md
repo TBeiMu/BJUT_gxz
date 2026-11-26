@@ -14,6 +14,8 @@ v0.5.9 延续考试／成绩管理及个性化设置，卡片通透度现为 2%�
 
 ## 下载与安装
 
+iOS 移植版使用相同的 0.5.9／40，支持 iOS 17 及以上；当前正在编译打包，将在同一 v0.5.9 Release 提供独立未签名 IPA。**未签名、未执行功能测试，签名与安装自行处理。** iOS 实现与平台差异见 [iOS 说明](ios/README.md)，实际交付状态见 [iOS 交付记录](docs/ios/交付记录.md)。以下安装与既有验证说明仍针对 Android。
+
 [下载 v0.5.9 APK](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/gongxiaozhu.apk) · [版本与更新说明](https://github.com/TBeiMu/BJUT_gxz/releases) · [SHA-256 校验文件](https://github.com/TBeiMu/BJUT_gxz/releases/download/v0.5.9/SHA256SUMS.txt)
 
 v0.4.9 至 v0.5.8 可通过“我的 → 检查更新”升级，也可手动下载后覆盖安装。v0.5.9／40 沿用固定签名及本机资料格式；覆盖安装可保留原账号、课表和设置，请勿先卸载或清除资料。v0.4.8 及更早版本需先手动覆盖安装 v0.4.9 一次。

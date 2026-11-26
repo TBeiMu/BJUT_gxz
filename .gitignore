@@ -16,6 +16,14 @@ build/
 *.aab
 *.ap_
 
+# iOS local state and unsigned build outputs
+ios/.build/
+ios/DerivedData/
+ios/build/
+ios/**/xcuserdata/
+*.ipa
+*.xcarchive
+
 # Signing keys and local secrets
 *.jks
 *.keystore

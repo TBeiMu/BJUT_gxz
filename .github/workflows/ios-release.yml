@@ -1,0 +1,110 @@
+name: 构建与发布 iOS 未签名 IPA
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 追加 iOS 附件的现有 Android Release 标签
+        required: true
+        default: v0.5.9
+        type: string
+      source_commit:
+        description: 本次 iOS 构建的完整源码 SHA，不移动原版本标签
+        required: true
+        type: string
+      publish:
+        description: 构建完成后追加到现有 Release；关闭时仅保存编译产物
+        default: true
+        type: boolean
+      replace_ios:
+        description: 仅在本轮 iOS 附件需要修订时替换三个 iOS 附件
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: ios-release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+    steps:
+      - name: 校验构建参数
+        run: |
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ && "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          test -d "$DEVELOPER_DIR"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_commit }}
+      - name: 准备独立 iOS 工程
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          python3 ios/scripts/generate_project.py
+          test -f "docs/ios/$RELEASE_TAG.md"
+      - name: 仅编译 iOS Release，不运行测试
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/GongXiaoZhu.xcodeproj -scheme GongXiaoZhu \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/gxz-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
+            build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+      - name: 打包未签名 IPA 和实际更新信息
+        run: |
+          python3 ios/scripts/package_ipa.py --app "$RUNNER_TEMP/gxz-derived/Build/Products/Release-iphoneos/工小助.app" \
+            --output "$RUNNER_TEMP/ios-release" --tag "$RELEASE_TAG" --source "$SOURCE_COMMIT" --notes "docs/ios/$RELEASE_TAG.md"
+      - name: 保存 iOS 编译产物
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gongxiaozhu-ios-${{ inputs.tag }}
+          path: |
+            ${{ runner.temp }}/ios-release/
+            ios/GongXiaoZhu.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          retention-days: 14
+      - name: 追加 iOS 附件，保留 Android 附件和原标签
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPLACE_IOS: ${{ inputs.replace_ios }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-before.json"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          before = json.loads((root/'release-before.json').read_text())
+          meta = json.loads((root/'ios-release/update-ios.json').read_text())
+          if before['draft'] or before['tag_name'] != meta['releaseTag']: raise SystemExit('必须追加到已发布的对应 Android Release')
+          names = ['gongxiaozhu-ios-unsigned.ipa', 'SHA256SUMS-ios.txt', 'update-ios.json']
+          present = set(x['name'] for x in before['assets'])
+          if not {'gongxiaozhu.apk', 'SHA256SUMS.txt', 'update.json'} <= present: raise SystemExit('对应 Android 附件不完整')
+          if present.intersection(names) and os.environ['REPLACE_IOS'] != 'true': raise SystemExit('iOS 附件已存在，需要显式选择本轮 iOS 修订')
+          command = ['gh', 'release', 'upload', meta['releaseTag']] + [str(root/'ios-release'/name) for name in names]
+          if os.environ['REPLACE_IOS'] == 'true': command += ['--clobber']
+          subprocess.run(command, check=True)
+          body = before.get('body') or ''
+          start, end = '<!-- ios-port:start -->', '<!-- ios-port:end -->'
+          if start in body and end in body: body = body[:body.index(start)].rstrip() + body[body.index(end)+len(end):]
+          section = f"\n\n{start}\n## iOS 未签名移植版\n\n版本 {meta['versionName']}／构建号 {meta['versionCode']}，支持 iOS 17 及以上，仅提供 iOS IPA。\n\n**未签名、未执行功能测试，签名与安装自行处理。**\n\n{meta['releaseNotes']}\n\n构建源码：`{meta['sourceCommit']}`。IPA SHA-256：`{meta['ipaSHA256']}`。\n{end}\n"
+          notes = root/'combined-release-notes.md'; notes.write_text(body.rstrip()+section, encoding='utf-8')
+          subprocess.run(['gh', 'release', 'edit', meta['releaseTag'], '--notes-file', str(notes)], check=True)
+          after = json.loads(subprocess.check_output(['gh','api',f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{meta['releaseTag']}"], text=True))
+          protected = ['gongxiaozhu.apk', 'SHA256SUMS.txt', 'update.json']
+          for name in protected:
+              old = next(x for x in before['assets'] if x['name']==name); new = next(x for x in after['assets'] if x['name']==name)
+              if any(old.get(k)!=new.get(k) for k in ('id','size','digest','updated_at')): raise SystemExit('原 Android 附件发生变化')
+          print('iOS 附件已追加；原 Android 三个附件未变。未执行功能测试。')
+          PY
+      - name: 保存编译日志
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ios-build-log-${{ github.run_id }}
+          path: ${{ runner.temp }}/ios-build.log
+          if-no-files-found: ignore
+          retention-days: 7
