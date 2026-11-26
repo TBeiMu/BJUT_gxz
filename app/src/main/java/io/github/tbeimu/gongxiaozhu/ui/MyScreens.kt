@@ -101,13 +101,13 @@ private fun MyAcademicActions(onOpen: (MyDestination) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         listOf(MyDestination.EXAMS, MyDestination.GRADES).forEach { entry ->
             val interaction = remember { MutableInteractionSource() }
-            Column(Modifier.weight(1f).fillMaxHeight().heightIn(min = 104.dp)
+            Column(Modifier.weight(1f).fillMaxHeight().heightIn(min = 80.dp)
                 .pressScale(interaction, .975f).glass(palette)
                 .clickable(interaction, LocalIndication.current, role = Role.Button) { onOpen(entry) }
                 .testTag("my_${entry.name}")
-                .padding(horizontal = 12.dp, vertical = 16.dp),
+                .padding(horizontal = 12.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically)) {
+                verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
                 LineGlyph(entry.glyph, Modifier.size(26.dp), palette.ink)
                 Text(entry.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyLarge,
                     color = palette.ink, textAlign = TextAlign.Center)
