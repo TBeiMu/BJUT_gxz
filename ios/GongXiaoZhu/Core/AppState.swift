@@ -122,7 +122,7 @@ struct ExamEdit: Identifiable { var id = UUID(); var record: ExamRecord?; var re
     }
     func background() {
         active = false; invalidateUndo(); cancelName(); cancelBilling(); cancelAcademic(); updates.background()
-        if !scheduleSubmitting && schedulePage != nil { pauseImport() }
+        if !scheduleSubmitting && importSession != nil { pauseImport() }
         stopMonitoringIfIdle()
     }
     func stopMonitoringIfIdle() { if !active && !campusRunning && !scheduleBusy && !updates.downloading { network.stop() } }

@@ -24,7 +24,8 @@ def main():
     if info['CFBundleShortVersionString'] != args.tag[1:] or info['CFBundleIdentifier'] != 'io.github.tbeimu.gongxiaozhu.ios' or info['MinimumOSVersion'] != '17.0' or info['CFBundleSupportedPlatforms'] != ['iPhoneOS']: raise SystemExit('iOS 包版本、系统或平台信息不符')
     if any(app.rglob('_CodeSignature')) or any(app.rglob('embedded.mobileprovision')): raise SystemExit('构建包含签名或描述文件')
     executable = app / info['CFBundleExecutable']
-    subprocess.run(['xcrun', 'lipo', '-verify_arch', 'arm64', str(executable)], check=True)
+    architectures = subprocess.check_output(['xcrun', 'lipo', '-archs', str(executable)], text=True).split()
+    if architectures != ['arm64']: raise SystemExit('iOS 可执行文件必须仅包含 arm64 架构')
     signature = subprocess.run(['codesign', '-dv', str(app)], capture_output=True, text=True)
     if signature.returncode == 0: raise SystemExit('App 已被签名，拒绝作为未签名包交付')
     output = Path(args.output).resolve(); output.mkdir(parents=True, exist_ok=True)
