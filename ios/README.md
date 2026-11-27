@@ -50,7 +50,7 @@ xcodebuild -project ios/GongXiaoZhu.xcodeproj -scheme GongXiaoZhu \
 
 ## 发布
 
-v0.6.0／41 与 Android 同步交付；本次只执行交付所需的未签名编译与打包，功能状态按用户要求未验证。双端源码、工作流、附件摘要与边界见 [v0.6.0 验证记录](../docs/testing/v0.6.0验证.md)。以下保留 v0.5.9 首次交付历史。
+v0.6.0／41 已于 2026 年 11 月 27 日 14:16:49（上海时间）与 Android 在同一 Release 同步交付；IPA 为 6,992,919 字节，源码 `28227d273ca3a695efafd9a9c146116b7f6f38df`。本次只执行交付所需的未签名编译与打包，功能状态按用户要求未验证。双端源码、工作流、附件摘要与边界见 [v0.6.0 验证记录](../docs/testing/v0.6.0验证.md)。以下保留 v0.5.9 首次交付历史。
 
 2026 年 11 月 27 日 00:15:36（上海时间）已向现有 v0.5.9 Release 追加三个独立附件：gongxiaozhu-ios-unsigned.ipa、SHA256SUMS-ios.txt、update-ios.json。IPA 为 6,928,647 字节，源码 `216d650f58ea01e50c111de8fcf507ae9f7f33cb`；Release／arm64 编译、包结构及公开文件完整性核对通过。原 Android 三个附件、发布说明和原标签未变。实际构建、摘要及未测试边界记录在 [iOS 交付记录](../docs/ios/交付记录.md)。
 
