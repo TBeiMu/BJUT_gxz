@@ -76,6 +76,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tbeimu.gongxiaozhu.network.CampusConnectionNotice
+import io.github.tbeimu.gongxiaozhu.academic.AcademicUiState
+import io.github.tbeimu.gongxiaozhu.academic.ExamRecord
+import io.github.tbeimu.gongxiaozhu.academic.upcomingExamOverview
 import io.github.tbeimu.gongxiaozhu.schedule.CourseBlock
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleCourse
 import io.github.tbeimu.gongxiaozhu.schedule.ScheduleUiState
@@ -86,6 +89,7 @@ import io.github.tbeimu.gongxiaozhu.schedule.courseBlocks
 import io.github.tbeimu.gongxiaozhu.schedule.scheduleToday
 import java.time.Duration
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -106,17 +110,28 @@ internal fun ScheduleHome(state: ScheduleUiState, modifier: Modifier, onImport: 
     onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
     connectionNotice: CampusConnectionNotice? = null, titleUnobstructed: Boolean = true, onCancelImport: () -> Unit = {},
     onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow,
-    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }) {
+    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> },
+    academic: AcademicUiState = AcademicUiState(), onOpenExams: () -> Unit = {},
+    examNowProvider: () -> LocalDateTime = ::shanghaiNow) {
     var week by rememberSaveable { mutableStateOf(false) }
     val schedule = remember(state.data) { state.data.display() }
+    val examNow by rememberForegroundMoment(examNowProvider)
+    val exams = academic.data.exams.takeUnless { academic.loading || academic.blocked }.orEmpty()
+    val emptyOverview = remember(exams, examNow, week, schedule, state.blocked) {
+        if (!week && (schedule == null || state.blocked)) upcomingExamOverview(exams, examNow.toLocalDate(), examNow) else null
+    }
+    val emptyFooter: (@Composable () -> Unit)? = emptyOverview?.let { overview ->
+        { UpcomingExamsSummary(overview, examNow, onOpenExams, enabled = titleUnobstructed) }
+    }
     // Switched in one frame, never cross-faded: only one view may own the campus notice title.
     Box(modifier.fillMaxSize()) {
         // While the encrypted timetable is being read: the mark, not an empty page that flickers.
         if (state.loading) { BrandLoader(Modifier.size(64.dp).align(Alignment.Center)); return@Box }
         if (!week && schedule != null && !state.blocked) TodayScreen(state, schedule, onImport, onPause, onCancelImport,
-            todayProvider, nowProvider, connectionNotice, titleUnobstructed, onDialogVisibilityChanged, onAddCourse, onEditCourse)
+            todayProvider, nowProvider, connectionNotice, titleUnobstructed, onDialogVisibilityChanged, onAddCourse, onEditCourse,
+            exams, examNow, onOpenExams)
         else ScheduleScreen(state, Modifier.fillMaxSize(), onImport, onPause, onRetry, onMine, todayProvider, connectionNotice,
-            titleUnobstructed, onCancelImport, onDialogVisibilityChanged, nowProvider, onAddCourse, onEditCourse)
+            titleUnobstructed, onCancelImport, onDialogVisibilityChanged, nowProvider, onAddCourse, onEditCourse, emptyFooter)
         if (schedule != null && !state.blocked) ModeSwitch(week, Modifier.align(Alignment.BottomEnd)
             .padding(end = 20.dp, bottom = 18.dp)) { week = !week }
     }
@@ -155,7 +170,8 @@ private enum class CardState { PAST, LIVE, NEXT, AHEAD }
 private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImport: () -> Unit, onPause: () -> Unit,
     onCancelImport: () -> Unit, todayProvider: () -> LocalDate, nowProvider: () -> LocalTime,
     notice: CampusConnectionNotice?, titleUnobstructed: Boolean, onDialogVisibilityChanged: (Boolean) -> Unit,
-    onAddCourse: (Int, Int) -> Unit, onEditCourse: (ScheduleCourse, Boolean) -> Unit) {
+    onAddCourse: (Int, Int) -> Unit, onEditCourse: (ScheduleCourse, Boolean) -> Unit,
+    exams: List<ExamRecord>, examNow: LocalDateTime, onOpenExams: () -> Unit) {
     val today = rememberScheduleDate(todayProvider)
     val now by rememberScheduleTime(nowProvider)
     val palette = gxz
@@ -293,7 +309,7 @@ private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImp
                 .testTag("today_course_viewport")) {
                 if (returnMotion.running || returnGestureActive) {
                     ReturningDayLayers(returnMotion, dates) { date ->
-                        DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), entranceEnabled = false,
+                        DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), exams, examNow, onOpenExams, entranceEnabled = false,
                             coursesEnabled = false, onCourse = {})
                     }
                 } else AnimatedContent(selected, Modifier.fillMaxSize(), transitionSpec = {
@@ -305,7 +321,8 @@ private fun TodayScreen(state: ScheduleUiState, schedule: DisplaySchedule, onImp
                                 fadeOut(tween(Motion.SHORT)))
                     }
                 }, label = "切换日期") { date ->
-                    DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), entranceEnabled = date != suppressEntranceDate) {
+                    DayAgenda(date, schedule, today.value, now, toneOrder, scrollFor(date), exams, examNow, onOpenExams,
+                        entranceEnabled = date != suppressEntranceDate, coursesEnabled = interactive && date == selected) {
                         if (!addMenu && titleUnobstructed) { details = it; onDialogVisibilityChanged(true) }
                     }
                 }
@@ -413,7 +430,8 @@ private fun WeekStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalD
 
 @Composable
 private fun DayAgenda(date: LocalDate, schedule: DisplaySchedule, today: LocalDate, now: LocalTime,
-    toneOrder: Map<String, Int>, scroll: ScrollState, entranceEnabled: Boolean = true, coursesEnabled: Boolean = true,
+    toneOrder: Map<String, Int>, scroll: ScrollState, exams: List<ExamRecord>, examNow: LocalDateTime,
+    onOpenExams: () -> Unit, entranceEnabled: Boolean = true, coursesEnabled: Boolean = true,
     onCourse: (List<ScheduleCourse>) -> Unit) {
     val palette = gxz
     val blocks = remember(schedule, date) { dayBlocks(schedule, date) }
@@ -443,6 +461,9 @@ private fun DayAgenda(date: LocalDate, schedule: DisplaySchedule, today: LocalDa
         }
         if (isToday) Tomorrow(date.plusDays(1), schedule, toneOrder,
             Modifier.entrance((blocks.size + 1) * Motion.STAGGER + 40, enabled = entranceEnabled))
+        val overview = remember(exams, date, examNow) { upcomingExamOverview(exams, date, examNow) }
+        overview?.let { UpcomingExamsSummary(it, examNow, onOpenExams,
+            Modifier.padding(top = 18.dp), enabled = coursesEnabled) }
     }
 }
 

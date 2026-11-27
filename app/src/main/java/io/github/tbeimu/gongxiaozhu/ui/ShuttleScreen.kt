@@ -53,7 +53,7 @@ internal fun ShuttleTimetablePage(onBack: () -> Unit, modifier: Modifier = Modif
     }
     Column(modifier.fillMaxSize().testTag("shuttle_page")) {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             RoundIconButton(onBack, Modifier.size(48.dp).semantics { contentDescription = "返回" }) {
                 LineGlyph(AppGlyph.BACK, Modifier.size(20.dp))
             }

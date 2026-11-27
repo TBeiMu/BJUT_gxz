@@ -38,8 +38,8 @@ class ShuttleTimetableTest {
                 shuttleDayType(LocalDate.of(2026, 11, day)))
         }
         assertEquals(ShuttleDayType.WORKDAY, shuttleDayType(LocalDate.of(2026, 11, 30)))
-        assertEquals("校车时刻表（工作）", ShuttleDayType.WORKDAY.title)
-        assertEquals("校车时刻表（周末）", ShuttleDayType.WEEKEND.title)
+        assertEquals("校车时刻表（工作日）", ShuttleDayType.WORKDAY.title)
+        assertEquals("校车时刻表（休息日）", ShuttleDayType.WEEKEND.title)
         assertEquals(ShuttleDayType.WORKDAY, ShuttleDayType.WORKDAY.other.other)
     }
 

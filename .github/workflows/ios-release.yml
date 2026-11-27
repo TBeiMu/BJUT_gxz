@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 追加 iOS 附件的现有 Android Release 标签
+        description: 追加 iOS 附件的对应 Release 标签，支持双端待发布草稿
         required: true
-        default: v0.5.9
+        default: v0.6.0
         type: string
       source_commit:
         description: 本次 iOS 构建的完整源码 SHA，不移动原版本标签
@@ -80,7 +80,7 @@ jobs:
           root = pathlib.Path(os.environ['RUNNER_TEMP'])
           before = json.loads((root/'release-before.json').read_text())
           meta = json.loads((root/'ios-release/update-ios.json').read_text())
-          if before['draft'] or before['tag_name'] != meta['releaseTag']: raise SystemExit('必须追加到已发布的对应 Android Release')
+          if before['tag_name'] != meta['releaseTag']: raise SystemExit('必须追加到对应版本 Release')
           names = ['gongxiaozhu-ios-unsigned.ipa', 'SHA256SUMS-ios.txt', 'update-ios.json']
           present = set(x['name'] for x in before['assets'])
           if not {'gongxiaozhu.apk', 'SHA256SUMS.txt', 'update.json'} <= present: raise SystemExit('对应 Android 附件不完整')

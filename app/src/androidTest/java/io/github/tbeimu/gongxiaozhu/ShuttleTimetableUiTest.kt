@@ -158,7 +158,7 @@ class ShuttleTimetableUiTest {
 
     @Test fun weekendTableUsesItsOwnTimesRoutesAndNextBus() {
         clock.set(LocalDateTime.of(2026, 11, 28, 7, 59)); show()
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（周末）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（休息日）")
         compose.onNodeWithTag("shuttle_status").assertTextEquals("下一班预计 8:00 · 中蓝校区发车")
         capture("weekend-compact")
         shuttleRoutes(ShuttleDayType.WEEKEND).forEach { route ->
@@ -179,16 +179,16 @@ class ShuttleTimetableUiTest {
 
     @Test fun topRightSwitchResetsScrollAndOtherDayHasNoHighlight() {
         show()
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作日）")
         compose.onNodeWithText(shuttleRoutes(ShuttleDayType.WORKDAY)[1].stops.joinToString(" → ")).performScrollTo()
         compose.onNodeWithTag("shuttle_switch").performClick()
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（周末）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（休息日）")
         compose.onNodeWithTag("shuttle_status").assertIsDisplayed().assertTextEquals("非今日时刻表")
         compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "下一班")).assertCountEquals(0)
         compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已过计划发车时间")).assertCountEquals(0)
         capture("weekend-preview")
         repeat(5) { compose.onNodeWithTag("shuttle_switch").performClick() }
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作日）")
         compose.onNodeWithTag("shuttle_status").assertTextEquals("下一班预计 7:30 · 中蓝校区发车")
     }
 
@@ -197,17 +197,26 @@ class ShuttleTimetableUiTest {
         show(restoration = restoration)
         compose.onNodeWithTag("shuttle_switch").performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（周末）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（休息日）")
         compose.onNodeWithTag("shuttle_status").assertTextEquals("非今日时刻表")
         clock.set(LocalDateTime.of(2026, 11, 28, 0, 0)); broadcast(Intent.ACTION_DATE_CHANGED)
         compose.onNodeWithTag("shuttle_status").assertTextEquals("下一班预计 8:00 · 中蓝校区发车")
         clock.set(LocalDateTime.of(2026, 11, 30, 0, 0)); broadcast(Intent.ACTION_DATE_CHANGED)
-        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作）")
+        compose.onNodeWithTag("shuttle_title").assertTextEquals("校车时刻表（工作日）")
         compose.onNodeWithTag("shuttle_status").assertTextEquals("下一班预计 7:20 · 中蓝校区发车")
     }
 
     @Test fun compactRowsShowSevenCompleteRowsWithoutVisibleNextBadges() {
         show()
+        listOf("校车时刻表（工作日）", "校车时刻表（休息日）").forEach { title ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithTag("shuttle_title").assertTextEquals(title)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals("320dp 标准字号标题保持单行", 1, layouts.single().lineCount)
+            assertFalse("标题完整显示", layouts.single().hasVisualOverflow)
+            capture(if (title.contains("工作日")) "title-workday" else "title-restday")
+            compose.onNodeWithTag("shuttle_switch").performClick()
+        }
         val host = compose.onNodeWithTag("shuttle_test_host").fetchSemanticsNode().boundsInRoot
         val first = compose.onNodeWithTag("shuttle_departure_morning_0").fetchSemanticsNode().boundsInRoot
         val seventh = compose.onNodeWithTag("shuttle_departure_morning_6").fetchSemanticsNode().boundsInRoot

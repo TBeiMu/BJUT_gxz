@@ -97,7 +97,8 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
     onPause: () -> Unit, onRetry: () -> Unit, onMine: () -> Unit, todayProvider: () -> LocalDate = ::scheduleToday,
     connectionNotice: CampusConnectionNotice? = null, titleUnobstructed: Boolean = true, onCancelImport: () -> Unit = {},
     onDialogVisibilityChanged: (Boolean) -> Unit = {}, nowProvider: () -> LocalTime = ::scheduleNow,
-    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> }) {
+    onAddCourse: (Int, Int) -> Unit = { _, _ -> }, onEditCourse: (ScheduleCourse, Boolean) -> Unit = { _, _ -> },
+    emptyFooter: (@Composable () -> Unit)? = null) {
     val today = rememberScheduleDate(todayProvider)
     val now by rememberScheduleTime(nowProvider)
     val reducedMotion = LocalReducedMotion.current
@@ -162,10 +163,10 @@ internal fun ScheduleScreen(state: ScheduleUiState, modifier: Modifier, onImport
         }
         when {
             state.blocked -> ScheduleEmpty("课表存储暂不可用", "可以重试读取，或在课表管理中确认清除缓存。", "重试读取课表", onRetry,
-                modifier = Modifier.weight(1f), secondary = onMine)
+                modifier = Modifier.weight(1f), secondary = onMine, footer = emptyFooter)
             schedule == null -> ScheduleEmpty(if (state.data.pending == null) "把这一学期放进口袋" else "整学期尚未导入完成",
                 "导入学校课表，或添加自己的课程。", "添加课表",
-                { addMenu = true }, modifier = Modifier.weight(1f), enabled = !state.busy && !state.loading)
+                { addMenu = true }, modifier = Modifier.weight(1f), enabled = !state.busy && !state.loading, footer = emptyFooter)
             else -> Box(Modifier.weight(1f).fillMaxWidth().padding(start = 14.dp, top = 4.dp, bottom = 10.dp).clipToBounds()
                 .testTag("schedule_week_area")) {
                 val gridBackdrop = rememberScheduleBackdrop()
@@ -352,8 +353,8 @@ internal fun ScheduleStatus(state: ScheduleUiState, onPause: () -> Unit, onImpor
 
 @Composable
 private fun ScheduleEmpty(title: String, subtitle: String, action: String, onClick: () -> Unit,
-    modifier: Modifier, enabled: Boolean = true, secondary: (() -> Unit)? = null) {
-    Box(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), contentAlignment = Alignment.Center) {
+    modifier: Modifier, enabled: Boolean = true, secondary: (() -> Unit)? = null, footer: (@Composable () -> Unit)? = null) {
+    val card: @Composable () -> Unit = {
         GlassCard(Modifier.widthIn(max = 420.dp), padding = PaddingValues(24.dp), spacing = 0.dp) {
             TimetableMotif(Modifier.fillMaxWidth().height(132.dp))
             Spacer(Modifier.height(22.dp))
@@ -365,6 +366,11 @@ private fun ScheduleEmpty(title: String, subtitle: String, action: String, onCli
             secondary?.let { TextButton(onClick = it, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp)) { Text("课表管理") } }
         }
     }
+    if (footer == null) Box(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        contentAlignment = Alignment.Center) { card() }
+    else Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("schedule_empty_scroll")
+        .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) { card(); footer() }
 }
 
 /** A week in miniature for the empty state: the timetable the import will bring. */

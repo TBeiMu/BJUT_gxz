@@ -13,7 +13,12 @@ struct ScheduleHome: View {
     var body: some View {
         VStack(spacing: 10) {
             header
-            if let error = app.scheduleError { ScrollView { StorageNotice(module: "schedule", text: error).padding(20) } }
+            if let error = app.scheduleError {
+                ScrollView { VStack(spacing: 18) {
+                    StorageNotice(module: "schedule", text: error)
+                    if !app.wholeWeek { examSummary(from: ShanghaiClock.day(now)) }
+                }.padding(20) }
+            }
             else if let display = app.display {
                 if app.wholeWeek {
                     WeekPager(week: app.selectedWeek, count: display.weeks.count, animated: !reduceMotion, change: { app.selectedWeek = $0 }) { week in
@@ -27,7 +32,12 @@ struct ScheduleHome: View {
                     }
                 }
             } else {
-                ScrollView { VStack(spacing: 18) { EmptyCard(title: "把课表装进口袋", detail: "导入研究生课表，或添加自己的课程。资料保存在本机，离线也能查看。", symbol: "calendar.badge.plus"); Button("导入课表") { app.open(.schedule) }.buttonStyle(.borderedProminent); Button("添加自定义课程") { Task { await app.editCourse() } }.buttonStyle(.bordered) }.padding(20) }
+                ScrollView { VStack(spacing: 18) {
+                    EmptyCard(title: "把课表装进口袋", detail: "导入研究生课表，或添加自己的课程。资料保存在本机，离线也能查看。", symbol: "calendar.badge.plus")
+                    Button("导入课表") { app.open(.schedule) }.buttonStyle(.borderedProminent)
+                    Button("添加自定义课程") { Task { await app.editCourse() } }.buttonStyle(.bordered)
+                    if !app.wholeWeek { examSummary(from: ShanghaiClock.day(now)) }
+                }.padding(20) }
             }
             HStack {
                 if app.display != nil { Button("返回本周") { withAnimation(.easeOut(duration: 0.22)) { app.selectToday() } }.buttonStyle(.bordered) }
@@ -78,6 +88,26 @@ struct ScheduleHome: View {
                     AppCard { VStack(alignment: .leading, spacing: 8) { Text(course.name).font(.headline); if !course.location.isEmpty { Label(course.location, systemImage: "mappin").font(.subheadline).foregroundStyle(.secondary) }; Text(LessonTimes.label(course.lessons)).font(.caption).foregroundStyle(.secondary); liveCourse(course) } }
                 }.foregroundStyle(.primary)
             }.buttonStyle(.plain)
+        }
+        examSummary(from: date)
+    }
+    @ViewBuilder private func examSummary(from day: String) -> some View {
+        if app.loaded, app.academicError == nil,
+           let overview = UpcomingExamOverview.make(records: app.academic.exams, from: day, now: now) {
+            VStack(alignment: .leading, spacing: 0) { ForEach(overview.exams) { exam in
+              Button { app.open(.exams) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.text").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(exam.record.fields.name).font(.subheadline)
+                        Text(exam.timeLabel(now: now))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }.padding(.vertical, 12).frame(minHeight: 48).foregroundStyle(.primary)
+              }.buttonStyle(.plain).accessibilityIdentifier("upcoming_exam_" + exam.id)
+                .accessibilityHint("查看全部考试")
+            } }.accessibilityIdentifier("upcoming_exams")
         }
     }
     @ViewBuilder private func liveCourse(_ course: Course) -> some View {

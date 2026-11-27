@@ -85,7 +85,7 @@ enum LessonTimes {
 
 enum ShuttleDayType: String, Sendable {
     case workday, weekend
-    var suffix: String { self == .workday ? "工作" : "周末" }
+    var suffix: String { self == .workday ? "工作日" : "休息日" }
     var title: String { "校车时刻表（\(suffix)）" }
     var other: ShuttleDayType { self == .workday ? .weekend : .workday }
     static func at(_ date: Date) -> ShuttleDayType {

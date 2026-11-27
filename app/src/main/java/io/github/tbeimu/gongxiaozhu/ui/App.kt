@@ -204,7 +204,8 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                         onCancelImport = model.scheduleController::cancelImport,
                         onDialogVisibilityChanged = { localDialogVisible = it },
                         onAddCourse = { week, day -> model.editCourse(week = week, weekday = day) },
-                        onEditCourse = { course, delete -> model.editCourse(course, deleteOnly = delete) })
+                        onEditCourse = { course, delete -> model.editCourse(course, deleteOnly = delete) },
+                        academic = state.academic, onOpenExams = { open(MyDestination.EXAMS, Tab.SCHEDULE) })
                 }
                 Tab.BILLING -> if (state.storageBlocked) Column(Modifier.padding(padding).padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)) {

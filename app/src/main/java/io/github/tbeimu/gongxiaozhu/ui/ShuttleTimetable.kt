@@ -20,7 +20,7 @@ internal data class ShuttleRoute(
 internal data class ShuttleDeparture(val route: ShuttleRoute, val time: LocalTime)
 
 internal enum class ShuttleDayType(val suffix: String) {
-    WORKDAY("工作"), WEEKEND("周末");
+    WORKDAY("工作日"), WEEKEND("休息日");
     val title: String get() = "校车时刻表（$suffix）"
     val other: ShuttleDayType get() = if (this == WORKDAY) WEEKEND else WORKDAY
 }
