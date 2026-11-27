@@ -16,7 +16,7 @@ class WallpaperPreferencesTest {
         }
         for (dark in listOf(false, true)) {
             val original = appearancePalette(WallpaperPreferences(), dark)
-            for (opacity in 84..98) {
+            for (opacity in 84..100) {
                 val legacy = appearancePalette(WallpaperPreferences(cardOpacityPercent = opacity), dark)
                 assertEquals(original.inkSoft, legacy.inkSoft)
                 // Compose stores sRGB alpha in 8 bits.
@@ -26,7 +26,7 @@ class WallpaperPreferencesTest {
                 val previous = appearancePalette(WallpaperPreferences(cardOpacityPercent = opacity), dark)
                 assertEquals(lerp(original.inkSoft, original.ink, (84 - opacity) / 34f * .3f), previous.inkSoft)
             }
-            for (opacity in 50..98) {
+            for (opacity in 50..100) {
                 val veil = if (dark) Color(0xFF0F1115).copy(alpha = .62f) else Color(0xFFF5F5F5).copy(alpha = .5f)
                 assertEquals(veil, wallpaperPhotoVeil(opacity, dark))
             }
@@ -56,7 +56,7 @@ class WallpaperPreferencesTest {
     @Test fun allModesPresetsAndBlurLimitsRoundTrip() {
         for (mode in WallpaperMode.entries) for (preset in WallpaperPreset.entries)
             for (theme in AppThemeMode.entries) for (accent in AccentPreset.entries)
-                for (blur in listOf(0, 12, 24)) for (opacity in listOf(0, 2, 26, 50, 70, 80, 84, 92, 96, 98)) {
+                for (blur in listOf(0, 12, 24)) for (opacity in listOf(0, 2, 26, 50, 70, 80, 84, 92, 96, 98, 99, 100)) {
                     val preferences = WallpaperPreferences(mode = mode, preset = preset, photoBlurDp = blur,
                         photoName = "wallpaper-00000000-0000-0000-0000-000000000000.jpg",
                         themeMode = theme, accentPreset = accent, cardOpacityPercent = opacity)
@@ -96,7 +96,7 @@ class WallpaperPreferencesTest {
         }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(photoBlurDp = -1).validate() }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(photoBlurDp = 25).validate() }
-        for (opacity in listOf(-1, 99)) assertThrows(IllegalArgumentException::class.java) {
+        for (opacity in listOf(-1, 101)) assertThrows(IllegalArgumentException::class.java) {
             WallpaperPreferences(cardOpacityPercent = opacity).validate()
         }
         assertThrows(IllegalArgumentException::class.java) { WallpaperPreferences(schemaVersion = 2).validate() }

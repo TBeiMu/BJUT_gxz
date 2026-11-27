@@ -245,6 +245,9 @@ class WallpaperTest {
 
     @Test fun transparencySliderAcceptsTouchAtBothEndsAndPersistsItsPreview() {
         show()
+        compose.onNodeWithText("一键应用，保留当前壁纸").assertDoesNotExist()
+        compose.onNodeWithText("只改变强调标记，课程颜色保持原样。").assertDoesNotExist()
+        compose.onNodeWithText("数值越大，卡片越透明；100% 时卡片底色完全透明。").assertDoesNotExist()
         val slider = compose.onNodeWithTag("card_transparency_slider").performScrollTo()
         slider.assertContentDescriptionEquals("卡片通透度")
         val track = compose.onNodeWithTag("card_transparency_slider_track", useUnmergedTree = true)
@@ -260,12 +263,20 @@ class WallpaperTest {
             thumb.fetchSemanticsNode().boundsInRoot.center.x, 1.5f)
         preview("appearance-refined-touch-right")
         track.performTouchInput { click(centerLeft) }
-        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 98 }
-        compose.onNodeWithTag("card_transparency_value").assertTextEquals("2%")
-        slider.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "2%"))
-        compose.runOnIdle { assertEquals(.98f, observedGlassAlpha, .002f) }
+        compose.waitUntil(5000) { !state.busy && store.loadPreferences().cardOpacityPercent == 100 }
+        compose.onNodeWithTag("card_transparency_value").assertTextEquals("0%")
+        slider.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "0%"))
+        compose.runOnIdle { assertEquals(1f, observedGlassAlpha, .002f) }
         assertEquals(track.fetchSemanticsNode().boundsInRoot.left,
             thumb.fetchSemanticsNode().boundsInRoot.center.x, 1.5f)
+        preview("appearance-refined-touch-left-0")
+        val opaqueState = state
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(5000) { state !== opaqueState && !state.busy }
+        compose.runOnIdle { assertEquals(100, state.preferences.cardOpacityPercent) }
+        compose.runOnIdle { assertEquals(1f, observedGlassAlpha, .002f) }
+        slider.performScrollTo()
+        compose.onNodeWithTag("card_transparency_value").assertTextEquals("0%")
         val sliderBounds = slider.fetchSemanticsNode().boundsInRoot
         val thumbCenter = thumb.fetchSemanticsNode().boundsInRoot.center - sliderBounds.topLeft
         // A real drag may continue past the last painted tick; include its thumb radius.
@@ -572,7 +583,7 @@ class WallpaperTest {
         } } }
         val failures = mutableListOf<String>()
         for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) {
-            for (transparency in 2..100 step 2) {
+            for (transparency in 0..100 step 2) {
                 compose.runOnIdle {
                     local.preferences = local.preferences.copy(themeMode = mode, cardOpacityPercent = 100 - transparency)
                     useGlass.value = false
@@ -580,7 +591,7 @@ class WallpaperTest {
                 val reference = compose.onRoot().captureToImage().asAndroidBitmap()
                 compose.runOnIdle { useGlass.value = true }
                 val actual = compose.onRoot().captureToImage().asAndroidBitmap()
-                if (transparency in listOf(2, 4, 16, 32, 34, 36, 50, 66, 80, 98, 100)) {
+                if (transparency in listOf(0, 2, 4, 16, 32, 34, 36, 50, 66, 80, 98, 100)) {
                     preview("uniform-partial-${mode.name}-$transparency")
                 }
                 val bounds = compose.onNodeWithTag("uniform_partial_card").fetchSemanticsNode().boundsInRoot

@@ -132,7 +132,7 @@ private enum class AppearanceCombo(
 private fun RecommendedAppearances(wallpaper: WallpaperState) {
     val systemDark = isSystemInDarkTheme()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        AppearanceHeading("推荐搭配", "一键应用，保留当前壁纸")
+        AppearanceHeading("推荐搭配")
         BoxWithConstraints(Modifier.fillMaxWidth().selectableGroup()) {
             val expanded = (maxWidth - 18.dp) / 3 < (62f * LocalDensity.current.fontScale + 22f).dp
             val thumbnailWidth = if (maxWidth < 300.dp) 64.dp else 86.dp
@@ -348,8 +348,6 @@ private fun ThemeAndAccentSettings(wallpaper: WallpaperState) {
                         AccentPreset.entries.forEach { AccentChoice(wallpaper, it, false, Modifier.weight(1f)) }
                     }
                 }
-                Text("只改变强调标记，课程颜色保持原样。",
-                    style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
             }
         }
     }
@@ -449,10 +447,9 @@ private fun CardTransparencySettings(wallpaper: WallpaperState) {
                 style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = palette.ink)
         }
         GlassCard(padding = PaddingValues(16.dp), spacing = 10.dp) {
-            Text("数值越大，卡片越透明；100% 时卡片底色完全透明。", style = MaterialTheme.typography.bodySmall, color = palette.inkSoft)
             QuietSlider(value.toFloat(), { wallpaper.previewCardOpacity(100f - it) }, wallpaper.saveCardOpacity,
                 (100 - MAX_CARD_OPACITY_PERCENT).toFloat()..(100 - MIN_CARD_OPACITY_PERCENT).toFloat(),
-                48, !wallpaper.busy, "card_transparency_slider", "卡片通透度", "$value%")
+                49, !wallpaper.busy, "card_transparency_slider", "卡片通透度", "$value%")
             SliderEndpoints("更清晰", "更通透")
             Spacer(Modifier.height(2.dp))
             BoxWithConstraints(Modifier.fillMaxWidth().selectableGroup()) {

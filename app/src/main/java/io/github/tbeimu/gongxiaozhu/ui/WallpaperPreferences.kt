@@ -5,7 +5,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 internal const val MIN_CARD_OPACITY_PERCENT = 0
-internal const val MAX_CARD_OPACITY_PERCENT = 98
+internal const val MAX_CARD_OPACITY_PERCENT = 100
 
 @Serializable
 internal enum class WallpaperMode(val title: String) {
