@@ -83,18 +83,61 @@ enum LessonTimes {
     }
 }
 
+enum ShuttleDayType: String, Sendable {
+    case workday, weekend
+    var suffix: String { self == .workday ? "工作" : "周末" }
+    var title: String { "校车时刻表（\(suffix)）" }
+    var other: ShuttleDayType { self == .workday ? .weekend : .workday }
+    static func at(_ date: Date) -> ShuttleDayType {
+        let weekday = ShanghaiClock.calendar.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7 ? .weekend : .workday
+    }
+}
+
+struct ShuttleDeparture: Sendable {
+    let route: ShuttleRoute
+    let time: String
+}
+
 struct ShuttleRoute: Identifiable, Sendable {
     var id: String
     var period: String
     var origin: String
     var departures: [String]
     var stops: [String]
-    static let all = [
-        ShuttleRoute(id: "morning", period: "早间", origin: "中蓝公寓", departures: ["07:20", "07:30", "07:35", "08:00", "08:15", "08:30", "08:45", "09:00", "09:15", "09:30", "09:45", "10:00"], stops: ["中蓝校区西甬路", "北工大东南门", "北工大南门", "松榆东里东门（地铁北工大西门站）", "北工大西门", "中蓝校区"]),
-        ShuttleRoute(id: "evening", period: "晚间", origin: "月亮湖西站", departures: ["20:30", "20:45", "21:00", "21:10", "21:20", "21:30", "21:40", "21:50", "22:00"], stops: ["月亮湖西", "逸夫图书馆北", "第二教学楼西门", "中蓝校区"])
+    var operation: String? = nil
+    // User-supplied natural-weekday plans, without inferred holiday adjustments.
+    private static let workdayRoutes = [
+        ShuttleRoute(id: "morning", period: "早间", origin: "中蓝校区",
+            departures: ["07:20", "07:30", "07:35", "07:45", "08:00", "08:15", "08:30", "08:40", "08:50", "09:00", "09:10", "09:20", "09:30", "09:40", "09:50", "10:00", "10:15"],
+            stops: ["中蓝校区西北门", "北工大东南门", "北工大南门", "松榆东里东门（地铁14号线）", "北工大西门"], operation: "校外运营"),
+        ShuttleRoute(id: "evening", period: "晚间", origin: "月亮湖西",
+            departures: ["19:45", "20:00", "20:15", "20:30", "20:45", "21:00", "21:10", "21:20", "21:30", "21:40", "21:50", "22:00", "22:10", "22:20", "22:30"],
+            stops: ["月亮湖西", "逸夫图书馆北", "第二教学楼西门", "中蓝校区"], operation: "校内运营")
     ]
-    static func next(_ date: Date) -> String? {
+    private static let weekendRoutes = [
+        ShuttleRoute(id: "morning", period: "早间", origin: "中蓝校区",
+            departures: ["08:00", "08:30", "09:00", "09:30", "10:00"],
+            stops: ["中蓝校区", "月亮湖", "逸夫图书馆", "北工大西门"]),
+        ShuttleRoute(id: "evening", period: "晚间", origin: "月亮湖",
+            departures: ["20:00", "20:30", "21:00", "21:30", "22:00"],
+            stops: ["月亮湖", "逸夫图书馆", "北工大西门", "中蓝校区"])
+    ]
+    static func routes(for type: ShuttleDayType) -> [ShuttleRoute] {
+        type == .workday ? workdayRoutes : weekendRoutes
+    }
+    static func timeLabel(_ time: String) -> String {
+        time.hasPrefix("0") ? String(time.dropFirst()) : time
+    }
+    static func next(_ date: Date) -> ShuttleDeparture? {
         let minute = ShanghaiClock.format(date, "HH:mm")
-        return all.flatMap(\.departures).filter { $0 >= minute }.min()
+        return routes(for: .at(date)).flatMap { route in
+            route.departures.filter { $0 >= minute }.map { ShuttleDeparture(route: route, time: $0) }
+        }.min { $0.time < $1.time }
+    }
+    static func status(_ date: Date, viewing type: ShuttleDayType) -> String {
+        guard type == .at(date) else { return "非今日时刻表" }
+        guard let departure = next(date) else { return "今日班次已结束" }
+        return "下一班预计 \(timeLabel(departure.time)) · \(departure.route.origin)发车"
     }
 }

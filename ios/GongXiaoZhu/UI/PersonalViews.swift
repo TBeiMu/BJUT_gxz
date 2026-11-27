@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct EntryRow: View {
     let title: String
@@ -48,18 +49,144 @@ struct CampusPage: View {
 }
 
 struct ShuttlePage: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var moment = Date()
+    @State private var selected: ShuttleDayType?
+    @State private var selectionDate = ShanghaiClock.day()
+    @State private var clockRevision = 0
+
+    private var viewedType: ShuttleDayType {
+        selectionDate == ShanghaiClock.day(moment) ? (selected ?? .at(moment)) : .at(moment)
+    }
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let next = ShuttleRoute.next(context.date)
-            ScrollView { VStack(alignment: .leading, spacing: 18) {
-                Text("中蓝校区—北工大专线").font(.title2.bold())
-                Text(next.map { "下一班计划发车 \($0)" } ?? "今日计划班次已结束").font(.headline).foregroundStyle(Color.accentColor)
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(ShuttleRoute.all) { route in AppCard { VStack(alignment: .leading, spacing: 12) { Text(route.period).font(.title2.bold()); Text(route.origin + " 发车").font(.caption).foregroundStyle(.secondary); ForEach(route.departures, id: \.self) { departure in HStack(alignment: .firstTextBaseline) { Text(departure).font(.system(.title3, design: .rounded, weight: departure == next ? .bold : .medium)).monospacedDigit(); if departure == route.departures.last { Text("末车").font(.caption2) }; Spacer(minLength: 0) }.foregroundStyle(departure == next ? Color.accentColor : .primary).padding(.vertical, 3) }; Divider(); Text("完整路线").font(.subheadline.bold()); ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in HStack(alignment: .top, spacing: 6) { Circle().fill(.secondary.opacity(0.6)).frame(width: 4, height: 4).padding(.top, 7); Text(stop).font(.caption).fixedSize(horizontal: false, vertical: true) } } } } }
+        let type = viewedType
+        let routes = ShuttleRoute.routes(for: type)
+        let isToday = type == ShuttleDayType.at(moment)
+        let next = isToday ? ShuttleRoute.next(moment) : nil
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(ShuttleRoute.status(moment, viewing: type))
+                        .font(.subheadline).foregroundStyle(next == nil ? Color.secondary : app.appearance.accent)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4).id("shuttle-top")
+                        .accessibilityIdentifier("shuttle_status")
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(routes) { route in
+                            VStack(spacing: 2) {
+                                Text(route.period).font(.caption).foregroundStyle(.secondary)
+                                Text(route.origin).font(.subheadline.weight(.semibold))
+                            }.frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                        }
+                    }
+                    VStack(spacing: 6) {
+                        ForEach(0..<(routes.map { $0.departures.count }.max() ?? 0), id: \.self) { index in
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(routes) { route in
+                                    if index < route.departures.count {
+                                        let time = route.departures[index]
+                                        ShuttleTimeCell(time: time, last: index == route.departures.count - 1, striped: index % 2 != 0,
+                                            highlighted: next?.route.id == route.id && next?.time == time,
+                                            past: isToday && time < ShanghaiClock.format(moment, "HH:mm"))
+                                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                            .accessibilityIdentifier("shuttle_departure_\(route.id)_\(index)")
+                                    } else { Color.clear.frame(maxWidth: .infinity).accessibilityHidden(true) }
+                                }
+                            }.fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    ForEach(routes) { route in
+                        AppCard {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(route.period + "路线").font(.subheadline.weight(.semibold))
+                                Text(route.stops.joined(separator: " → "))
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 24).frame(maxWidth: 760)
+            }
+            .onChange(of: type) { _, _ in proxy.scrollTo("shuttle-top", anchor: .top) }
+        }
+        .navigationTitle(type.title).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(type.title).font(.headline).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("shuttle_title")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { selectionDate = ShanghaiClock.day(moment); selected = type.other } label: {
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 20, weight: .regular))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
-                Text("以上为计划时刻，非实时到站信息；按上海时间显示下一班。").font(.footnote).foregroundStyle(.secondary)
-            }.padding(20).frame(maxWidth: 760) }
-        }.navigationTitle("校车时刻表")
+                .tint(.primary).accessibilityLabel("切换为\(type.other.suffix)时刻表")
+                .accessibilityValue("当前\(type.suffix)时刻表").accessibilityIdentifier("shuttle_switch")
+            }
+        }
+        .task(id: scenePhase == .active ? clockRevision : -1) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                refreshMoment()
+                let interval = 60 - moment.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
+                do { try await Task.sleep(for: .seconds(max(0.05, interval))) } catch { break }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            guard scenePhase == .active else { return }; refreshMoment(); clockRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+            guard scenePhase == .active else { return }; refreshMoment(); clockRevision += 1
+        }
+    }
+
+    private func refreshMoment() {
+        let now = Date()
+        if selectionDate != ShanghaiClock.day(now) { selected = nil; selectionDate = ShanghaiClock.day(now) }
+        moment = now
+    }
+}
+
+private struct ShuttleTimeCell: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.colorScheme) private var scheme
+    @ScaledMetric(relativeTo: .body) private var timeSize = 18.0
+    let time: String
+    let last: Bool
+    let striped: Bool
+    let highlighted: Bool
+    let past: Bool
+
+    private var foreground: Color { highlighted ? .white : (past ? .secondary : .primary) }
+    private var timeText: some View {
+        ZStack {
+            Text("00:00").hidden()
+            Text(ShuttleRoute.timeLabel(time))
+        }.font(.system(size: timeSize, weight: .medium, design: .rounded)).monospacedDigit()
+            .fixedSize(horizontal: true, vertical: true)
+    }
+    private var badge: some View { Text("末车").font(.caption2).fixedSize() }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ZStack {
+                HStack(spacing: 6) { badge.hidden(); timeText; badge.hidden() }
+                if last { HStack { Spacer(minLength: 0); badge } }
+            }
+            VStack(spacing: 4) { timeText; badge.opacity(last ? 1 : 0).accessibilityHidden(!last) }
+        }
+        .foregroundStyle(foreground).padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 40, maxHeight: .infinity)
+        .background(highlighted ? app.appearance.accent :
+            (striped ? (scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.045)) :
+                (scheme == .dark ? Color(hex: 0x20232B) : .white).opacity(1 - app.appearance.preferences.transparency / 100)),
+            in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(
+            highlighted ? app.appearance.accent : (scheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08)), lineWidth: 0.6))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ShuttleRoute.timeLabel(time) + (last ? "，末车" : ""))
+        .accessibilityValue(highlighted ? "下一班" : (past ? "已过计划发车时间" : "计划发车时间"))
     }
 }
 

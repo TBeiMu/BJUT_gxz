@@ -1,5 +1,8 @@
 package io.github.tbeimu.gongxiaozhu
 
+import io.github.tbeimu.gongxiaozhu.ui.shuttleDayType
+import io.github.tbeimu.gongxiaozhu.ui.shanghaiNow
+
 import android.content.Intent
 import android.content.ContextWrapper
 import android.content.ActivityNotFoundException
@@ -134,14 +137,18 @@ class MyNavigationTest {
         }
     }
     @Test fun shuttleWorksWithoutAccountsAndRestoresBothBackPaths(){
+        val today = shuttleDayType(shanghaiNow().toLocalDate())
         compose.onNodeWithText("我的",substring=false).performClick()
         assertTrue(compose.onNodeWithTag("my_SHUTTLE").fetchSemanticsNode().boundsInRoot.bottom <=
             compose.onNodeWithTag("my_SCHEDULE").fetchSemanticsNode().boundsInRoot.top)
         compose.onNodeWithTag("my_SHUTTLE").performClick()
         compose.onNodeWithTag("shuttle_timetable").assertExists()
+        compose.onNodeWithTag("shuttle_title").assertTextEquals(today.title)
+        compose.onNodeWithTag("shuttle_switch").performClick()
         compose.onNodeWithText("资费",substring=false).assertIsDisplayed()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("shuttle_timetable").assertExists()
+        compose.onNodeWithTag("shuttle_title").assertTextEquals(today.other.title)
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         context.getExternalFilesDir(null)!!.resolve("shuttle-app.png").outputStream().use {
             compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)
@@ -150,8 +157,17 @@ class MyNavigationTest {
         compose.onNodeWithTag("my_SHUTTLE").assertIsDisplayed()
         compose.onNodeWithTag("my_SHUTTLE").performClick()
         compose.onNodeWithTag("shuttle_timetable").assertExists()
+        compose.onNodeWithTag("shuttle_title").assertTextEquals(today.title)
+        compose.onNodeWithTag("shuttle_switch").performClick()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("my_SHUTTLE").assertIsDisplayed()
+        compose.onNodeWithTag("my_SHUTTLE").performClick()
+        compose.onNodeWithTag("shuttle_title").assertTextEquals(today.title)
+        compose.onNodeWithTag("shuttle_switch").performClick()
+        compose.onNodeWithText("课表", substring = false).performClick()
+        compose.onNodeWithText("我的", substring = false).performClick()
+        compose.onNodeWithTag("my_SHUTTLE").performClick()
+        compose.onNodeWithTag("shuttle_title").assertTextEquals(today.title)
     }
     @Test fun notificationIntentsOpenTheirOwnDetailsAndReturnToMine(){
         val updateRequests=mutableIntStateOf(0)

@@ -54,6 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -123,8 +124,10 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
     var returnTab by rememberSaveable { mutableStateOf(Tab.MY) }
     var networkSection by rememberSaveable { mutableStateOf(CampusNetworkSection.CONNECTION) }
     var networkEntryRequest by rememberSaveable { mutableStateOf(0L) }
+    var shuttleEntryRequest by rememberSaveable { mutableLongStateOf(0L) }
     val pages = rememberSaveableStateHolder()
     fun open(page: MyDestination, from: Tab = tab, section: CampusNetworkSection = CampusNetworkSection.CONNECTION) {
+        if (page == MyDestination.SHUTTLE) shuttleEntryRequest++
         if (page.canonical == MyDestination.NETWORK) {
             networkSection = if (page == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else section
             networkEntryRequest++
@@ -189,7 +192,7 @@ fun GongXiaoZhuApp(model: AppViewModel, openUpdatesRequest: Int = 0, openLoginRe
                     onResetSchedule = { resetSchedule = true }, onDelete = { deleting = it }, updateActions = updateActions,
                     onDialogVisibilityChanged = { localDialogVisible = it },
                     networkSection = if (destination == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else networkSection,
-                    networkEntryRequest = networkEntryRequest)
+                    networkEntryRequest = networkEntryRequest, shuttleEntryRequest = shuttleEntryRequest)
             } else when (screen.tab) {
                 Tab.SCHEDULE -> Box(Modifier.padding(padding).fillMaxSize()) {
                     ScheduleHome(state.schedule, Modifier, model.scheduleController::start,

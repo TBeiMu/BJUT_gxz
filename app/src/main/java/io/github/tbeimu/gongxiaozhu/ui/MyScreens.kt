@@ -155,7 +155,11 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
     onResetSchedule: () -> Unit, onDelete: (AccountSummary) -> Unit, updateActions: UpdateActions,
     onDialogVisibilityChanged: (Boolean) -> Unit = {},
     networkSection: CampusNetworkSection = if (page == MyDestination.ACCOUNTS) CampusNetworkSection.ACCOUNTS else CampusNetworkSection.CONNECTION,
-    networkEntryRequest: Long = 0L) {
+    networkEntryRequest: Long = 0L, shuttleEntryRequest: Long = 0L) {
+    if (page == MyDestination.SHUTTLE) {
+        ShuttleTimetablePage(onBack, modifier, entryRequest = shuttleEntryRequest)
+        return
+    }
     val palette = gxz
     Column(modifier.fillMaxSize()) {
         if (page != MyDestination.EXAMS && page != MyDestination.GRADES) Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 8.dp, end = 16.dp),
@@ -178,7 +182,7 @@ internal fun MyDetailScreen(page: MyDestination, state: AppUiState, modifier: Mo
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             when (page) {
                 MyDestination.EXAMS, MyDestination.GRADES -> Unit // Independent lazy lists above.
-                MyDestination.SHUTTLE -> ShuttleTimetableContent()
+                MyDestination.SHUTTLE -> Unit // Own header and one shared clock above.
                 MyDestination.SCHEDULE -> {
                     val schedule = state.schedule
                     var cancelImportConfirmation by remember { mutableStateOf(false) }
