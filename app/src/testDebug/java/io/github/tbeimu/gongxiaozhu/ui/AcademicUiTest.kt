@@ -1,6 +1,7 @@
 package io.github.tbeimu.gongxiaozhu.ui
 
 import android.graphics.Bitmap
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,8 +22,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -33,11 +36,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import io.github.tbeimu.gongxiaozhu.academic.*
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicReference
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureScreenRoboImage
 import org.junit.Assert.*
@@ -81,21 +86,20 @@ class AcademicUiTest {
         assertEquals(7L, saved?.third)
     }
 
-    @Test fun examFiltersKeepUnscheduledSeparateAndUseSuppliedShanghaiSnapshot() {
+    @Test fun unifiedExamListRemovesFiltersAndKeepsUnscheduledBeforeFinished() {
         val exams = listOf(record("past", "2026-11-24 09:00", "2026-11-24 11:00"),
             record("next", "2026-11-26 09:00"), record("unset"))
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, data = AcademicData(exams = exams)), AcademicActions(), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("exam_filter_UPCOMING").performScrollTo().performClick()
+        listOf("ALL", "UPCOMING", "FINISHED", "UNSET").forEach { compose.onNodeWithTag("exam_filter_$it").assertDoesNotExist() }
         compose.onNodeWithTag("exam_next").assertExists()
-        compose.onNodeWithTag("exam_past").assertDoesNotExist()
-        compose.onNodeWithTag("exam_unset").assertDoesNotExist()
-        compose.onNodeWithTag("exam_filter_FINISHED").performClick()
-        compose.onNodeWithTag("exam_past").assertExists()
-        compose.onNodeWithTag("exam_next").assertDoesNotExist()
-        compose.onNodeWithTag("exam_filter_UNSET").performClick()
         compose.onNodeWithTag("exam_unset").assertExists()
-        compose.onNodeWithTag("exam_past").assertDoesNotExist()
+        compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_past"))
+        val next = compose.onNodeWithTag("exam_next").fetchSemanticsNode().boundsInRoot
+        val unset = compose.onNodeWithTag("exam_unset").fetchSemanticsNode().boundsInRoot
+        val past = compose.onNodeWithTag("exam_past").fetchSemanticsNode().boundsInRoot
+        assertTrue(next.top < unset.top && unset.top < past.top)
+        compose.onNode(hasText("已结束") and hasAnyAncestor(hasTestTag("exam_past")), useUnmergedTree = true).assertExists()
         openExam("unset")
         compose.onAllNodes(hasText("时间未定") and hasAnyAncestor(hasTestTag("academic_exam_details"))).assertCountEquals(2)
     }
@@ -107,30 +111,24 @@ class AcademicUiTest {
         val exams = listOf(blankEnd, ExamRecord("unknown-school", schoolEnd, schoolEnd.toExamFields()))
         compose.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, data = AcademicData(exams = exams)), AcademicActions(), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("exam_filter_FINISHED").performScrollTo().performClick()
-        compose.onNodeWithText("暂无匹配的考试").assertExists()
-        compose.onNodeWithTag("exam_unknown-blank").assertDoesNotExist()
-        compose.onNodeWithTag("exam_unknown-school").assertDoesNotExist()
-        compose.onNodeWithTag("exam_filter_UPCOMING").performClick()
-        compose.onNodeWithText("暂无匹配的考试").assertExists()
-        compose.onNodeWithTag("exam_filter_UNSET").performClick()
+        compose.onNodeWithText("已结束").assertDoesNotExist()
         compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_unknown-blank"))
         compose.onNodeWithTag("exam_unknown-blank").assertExists()
         compose.onNodeWithTag("academic_exams").performScrollToNode(hasTestTag("exam_unknown-school"))
         compose.onNodeWithTag("exam_unknown-school").assertExists()
+        compose.onNodeWithText("10:00 – 另行通知").assertExists()
+        compose.onNodeWithText("09:00 – 结束待定").assertExists()
     }
 
-    @Test fun examFilterAndUnsavedDraftSurviveStateRestoration() {
+    @Test fun unifiedListAndUnsavedDraftSurviveStateRestoration() {
         val restoration = StateRestorationTester(compose)
         val exams = listOf(record("past", "2026-11-24 09:00"), record("next", "2026-11-26 09:00"))
         restoration.setContent { GongXiaoZhuTheme { AcademicContentBody(false,
             AcademicUiState(loading = false, data = AcademicData(exams = exams)),
             AcademicActions(), Modifier.fillMaxSize(), now) } }
-        compose.onNodeWithTag("exam_filter_UPCOMING").performScrollTo().performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("exam_filter_UPCOMING").assertIsSelected()
         compose.onNodeWithTag("exam_next").assertExists()
-        compose.onNodeWithTag("exam_past").assertDoesNotExist()
+        compose.onNodeWithTag("exam_past").assertExists()
         compose.onNodeWithTag("academic_add").performClick()
         compose.onNodeWithTag("academic_add_exam").performClick()
         compose.onNodeWithTag("exam_name").performTextInput("旋转后保留的考试草稿")
@@ -140,7 +138,52 @@ class AcademicUiTest {
         compose.onNodeWithTag("cancel_exam").performClick()
         compose.onNodeWithTag("discard_changes_dialog").assertExists()
         compose.onNodeWithTag("discard_changes").performClick()
-        compose.onNodeWithTag("exam_filter_UPCOMING").assertIsSelected()
+        compose.onNodeWithTag("exam_filter_UPCOMING").assertDoesNotExist()
+    }
+
+    @Test fun finishedCardUsesGrayForEveryTextAndDetailsKeepOriginalTimes() {
+        val past = record("past", "2026-11-24 09:00", "2026-11-24 11:00")
+        var gray = Color.Unspecified
+        compose.setContent { GongXiaoZhuTheme {
+            gray = gxz.inkSoft
+            AcademicContentBody(false, AcademicUiState(loading = false, data = AcademicData(exams = listOf(past))),
+                AcademicActions(), Modifier.fillMaxSize(), now)
+        } }
+        val texts = compose.onAllNodes(hasAnyAncestor(hasTestTag("exam_past")) and
+            SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult), useUnmergedTree = true)
+        assertTrue(texts.fetchSemanticsNodes().size >= 7)
+        for (index in texts.fetchSemanticsNodes().indices) texts[index].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { get ->
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            assertTrue(get(layouts))
+            layouts.forEach { assertEquals(gray, it.layoutInput.style.color) }
+        }
+        compose.onNodeWithText("24").assertExists()
+        compose.onNodeWithText("已结束").assertExists()
+        compose.onNodeWithText("09:00 – 11:00").assertDoesNotExist()
+        openExam("past")
+        compose.onNodeWithText(past.fields.start).assertExists()
+        compose.onNodeWithText(past.fields.end).assertExists()
+        compose.onNodeWithTag("edit_exam_past").assertIsEnabled()
+    }
+
+    @Test fun minuteTickAndForegroundUpdateFinishedStateAndOrderTogether() {
+        val clock = AtomicReference(now)
+        val exams = listOf(record("finishing", "2026-11-25 10:00", "2026-11-25 12:00"),
+            record("future", "2026-11-26 10:00", "2026-11-26 12:00"))
+        compose.setContent { GongXiaoZhuTheme {
+            val moment by rememberForegroundMoment(clock::get)
+            AcademicContentBody(false, AcademicUiState(loading = false, data = AcademicData(exams = exams)),
+                AcademicActions(), Modifier.fillMaxSize(), moment)
+        } }
+        compose.onNodeWithText("已结束").assertDoesNotExist()
+        compose.runOnIdle { clock.set(now.plusMinutes(1)); compose.activity.sendBroadcast(Intent(Intent.ACTION_TIME_TICK)) }
+        compose.onNodeWithText("已结束").assertExists()
+        assertTrue(compose.onNodeWithTag("exam_future").fetchSemanticsNode().boundsInRoot.top <
+            compose.onNodeWithTag("exam_finishing").fetchSemanticsNode().boundsInRoot.top)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        clock.set(now.plusDays(2))
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onAllNodesWithText("已结束").assertCountEquals(2)
     }
 
     @Test fun leavingExamPageReleasesTheGlobalDialogBlocker() {

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -31,9 +32,11 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.Lifecycle
 import io.github.tbeimu.gongxiaozhu.academic.*
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicReference
 import java.io.ByteArrayOutputStream
 import org.junit.Assert.*
 import org.junit.Rule
@@ -65,14 +68,16 @@ class AcademicDeviceUiTest {
     }
 
     private fun render(state: () -> AcademicUiState = { fixture() }, grades: () -> Boolean = { false },
-        fontScale: Float = 1f, width: Int = 393, height: Int = 780, actions: AcademicActions = AcademicActions()) {
+        fontScale: Float = 1f, width: Int = 393, height: Int = 780, actions: AcademicActions = AcademicActions(),
+        clock: () -> LocalDateTime = { now }) {
         compose.setContent {
+            val moment by rememberForegroundMoment(clock)
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 GongXiaoZhuTheme { AppBackdrop(WallpaperState()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                         Column(Modifier.widthIn(max = width.dp).fillMaxWidth().heightIn(max = height.dp).fillMaxHeight()) {
-                            key(grades()) { AcademicContentBody(grades(), state(), actions, Modifier.weight(1f), now) }
+                            key(grades()) { AcademicContentBody(grades(), state(), actions, Modifier.weight(1f), moment) }
                         }
                     }
                 } }
@@ -229,13 +234,12 @@ class AcademicDeviceUiTest {
         }
     }
 
-    @Test fun loadedExamsKeepSchoolFieldsAndAllThreeFilterStatesReachable() {
+    @Test fun unifiedExamsKeepSchoolFieldsUnknownTimesAndFinishedCardsReachable() {
         render()
         compose.onNodeWithTag("academic_identity").assertDoesNotExist()
         compose.onNodeWithTag("academic_refresh").assertIsDisplayed().assertIsEnabled()
         preview("exams-header")
-        reach("academic_exams", hasTestTag("exam_filter_UPCOMING"))
-        compose.onNodeWithTag("exam_filter_UPCOMING").performClick().assertIsSelected()
+        listOf("ALL", "UPCOMING", "FINISHED", "UNSET").forEach { compose.onNodeWithTag("exam_filter_$it").assertDoesNotExist() }
         reach("academic_exams", hasText(course))
         readable(course)
         reach("academic_exams", hasText(location))
@@ -247,16 +251,87 @@ class AcademicDeviceUiTest {
         readable("虚构教学班 01", details = true)
         preview("exams-data")
         compose.onNodeWithTag("academic_close_details").performClick()
-        reach("academic_exams", hasTestTag("exam_filter_FINISHED"))
-        compose.onNodeWithTag("exam_filter_FINISHED").performClick().assertIsSelected()
         reach("academic_exams", hasTestTag("exam_past"))
         compose.onNodeWithText("已结束的手动示例考试").assertIsDisplayed()
-        compose.onNodeWithTag("exam_school").assertDoesNotExist()
-        reach("academic_exams", hasTestTag("exam_filter_UNSET"))
-        compose.onNodeWithTag("exam_filter_UNSET").performClick().assertIsSelected()
+        compose.onNodeWithText("已结束").assertIsDisplayed()
+        compose.onNodeWithTag("exam_past").performClick()
+        readable("2026-11-24 09:00", details = true)
+        readable("2026-11-24 11:00", details = true)
+        compose.onNodeWithTag("academic_close_details").performClick()
         reach("academic_exams", hasTestTag("exam_unset"))
         compose.onNodeWithText("时间待通知的手动示例考试").assertIsDisplayed()
-        compose.onNodeWithTag("exam_past").assertDoesNotExist()
+        assertTrue(compose.onNodeWithTag("exam_unset").fetchSemanticsNode().boundsInRoot.top <
+            compose.onNodeWithTag("exam_past").fetchSemanticsNode().boundsInRoot.top)
+    }
+
+    @Test fun finishedExamStaysGrayReadableAndDatedAcrossThemesTransparencyAndLargeFont() {
+        var appearance by mutableStateOf(WallpaperPreferences(themeMode = AppThemeMode.LIGHT))
+        var fontScale by mutableStateOf(1f)
+        var gray = Color.Unspecified
+        val past = fixture().data.exams.single { it.id == "past" }
+        val wallpaper = WallpaperState().apply {
+            image = Bitmap.createBitmap(200, 400, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.rgb(70, 105, 140)) }.asImageBitmap()
+            preferences = appearance.copy(mode = WallpaperMode.PHOTO, photoBlurDp = 0, photoName = "wallpaper.jpg")
+        }
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                GongXiaoZhuTheme(appearance) {
+                    gray = gxz.inkSoft
+                    AppBackdrop(wallpaper) {
+                        Column(Modifier.widthIn(max = 320.dp).fillMaxSize()) {
+                            AcademicContentBody(false, AcademicUiState(loading = false, data = AcademicData(exams = listOf(past))),
+                                AcademicActions(), Modifier.weight(1f), now)
+                        }
+                    }
+                }
+            }
+        }
+        for (mode in listOf(AppThemeMode.LIGHT, AppThemeMode.DARK)) for (opacity in listOf(100, 0)) for (scale in listOf(1f, 2f)) {
+            compose.runOnIdle {
+                appearance = appearance.copy(themeMode = mode, cardOpacityPercent = opacity)
+                wallpaper.preferences = wallpaper.preferences.copy(themeMode = mode, cardOpacityPercent = opacity)
+                fontScale = scale
+            }
+            val status = if (scale == 2f) "11月24日 · 已结束" else "已结束"
+            reach("academic_exams", hasText(status))
+            readable(status)
+            preview("finished-${mode.name}-$opacity-$scale")
+            val texts = compose.onAllNodes(hasAnyAncestor(hasTestTag("exam_past")) and
+                SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult), useUnmergedTree = true)
+            for (index in texts.fetchSemanticsNodes().indices) texts[index].performSemanticsAction(SemanticsActions.GetTextLayoutResult) { get ->
+                val layouts = mutableListOf<TextLayoutResult>()
+                assertTrue(get(layouts))
+                layouts.forEach {
+                    assertEquals(gray, it.layoutInput.style.color)
+                    val context = "${it.layoutInput.text.text}; theme=$mode, opacity=$opacity, font=$scale"
+                    assertFalse(context, it.didOverflowHeight)
+                    // A badge may retain a wider paragraph container; check the actual text lines.
+                    for (line in 0 until it.lineCount) {
+                        assertFalse(context, it.isLineEllipsized(line))
+                        assertTrue(context, it.getLineLeft(line) >= -1f && it.getLineRight(line) <= it.size.width + 1f)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun examClockUpdatesReorderAndFinishOnMinuteAndForeground() {
+        val clock = AtomicReference(now)
+        val exams = listOf(ExamRecord("finishing", fields = ExamFields("正在结束的虚构考试", "2026-11-25 10:00", "2026-11-25 12:00")),
+            ExamRecord("future", fields = ExamFields("未来的虚构考试", "2026-11-26 10:00", "2026-11-26 12:00")))
+        render(state = { AcademicUiState(loading = false, data = AcademicData(exams = exams)) }, clock = clock::get)
+        compose.onNodeWithText("已结束").assertDoesNotExist()
+        compose.runOnIdle { clock.set(now.plusMinutes(1)) }
+        // TIME_TICK is protected on real devices; wait for the actual system minute broadcast.
+        compose.waitUntil(65_000) { compose.onAllNodesWithText("已结束").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithText("已结束").assertExists()
+        assertTrue(compose.onNodeWithTag("exam_future").fetchSemanticsNode().boundsInRoot.top <
+            compose.onNodeWithTag("exam_finishing").fetchSemanticsNode().boundsInRoot.top)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        clock.set(now.plusDays(2))
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onAllNodesWithText("已结束").assertCountEquals(2)
     }
 
     @Test fun loadedGradesKeepRawResultsCreditSummaryAndTermSelection() {

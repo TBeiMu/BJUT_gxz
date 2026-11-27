@@ -13,40 +13,86 @@ struct AcademicHeader: View {
     }
 }
 
+private struct ExamListItem: Identifiable {
+    let record: ExamRecord
+    let start: Date?
+    let end: Date?
+    let finished: Bool
+    var id: String { record.id }
+
+    init(_ record: ExamRecord, now: Date) {
+        self.record = record
+        start = ShanghaiClock.examTime(record.fields.start)
+        end = ShanghaiClock.examTime(record.fields.end)
+        if let start, let end { finished = end >= start && end < now } else { finished = false }
+    }
+
+    static func ordered(_ first: Self, _ second: Self) -> Bool {
+        if first.finished != second.finished { return !first.finished }
+        if first.finished, first.end != second.end { return first.end! > second.end! }
+        if !first.finished, first.start != second.start { return (first.start ?? .distantFuture) < (second.start ?? .distantFuture) }
+        if first.record.fields.name != second.record.fields.name { return first.record.fields.name < second.record.fields.name }
+        return first.id < second.id
+    }
+
+    func timeLabel(now: Date) -> String {
+        if finished, let start {
+            let pattern = ShanghaiClock.calendar.component(.year, from: start) == ShanghaiClock.calendar.component(.year, from: now) ? "M月d日" : "yyyy年M月d日"
+            return ShanghaiClock.format(start, pattern) + " · 已结束"
+        }
+        return (record.fields.start.isEmpty ? "时间未定" : record.fields.start) +
+            (record.fields.end.isEmpty ? "" : " — " + record.fields.end)
+    }
+}
+
 struct ExamsPage: View {
     @Environment(AppState.self) var app
+    @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
     @State private var showHidden = false
-    @State private var scope = "全部"
-    private var records: [ExamRecord] {
+    @State private var moment = Date()
+    @State private var clockRevision = 0
+    private var records: [ExamListItem] {
         let text = search.trimmed
         return app.academic.exams.filter { record in
-            (showHidden || !record.hidden) && (scope == "全部" || (scope == "学校" ? record.original != nil : record.original == nil)) &&
+            (showHidden || !record.hidden) &&
             (text.isEmpty || [record.fields.name, record.fields.location, record.fields.note].contains { $0.localizedCaseInsensitiveContains(text) })
-        }.sorted { a, b in let first = ShanghaiClock.examTime(a.fields.start), second = ShanghaiClock.examTime(b.fields.start); if first == second { return a.fields.name < b.fields.name }; return (first ?? .distantFuture) < (second ?? .distantFuture) }
+        }.map { ExamListItem($0, now: moment) }.sorted(by: ExamListItem.ordered)
     }
     var body: some View {
         ScrollView { LazyVStack(alignment: .leading, spacing: 14) {
             if let error = app.academicError { StorageNotice(module: "academic", text: error) }
             AcademicHeader(target: .exams)
-            Picker("考试来源", selection: $scope) { ForEach(["全部", "学校", "自定义"], id: \.self) { Text($0) } }.pickerStyle(.segmented)
-            if records.isEmpty { EmptyCard(title: "暂无符合条件的考试", detail: app.academic.examUpdatedAt == nil ? "可从学校读取考试，或添加自己的安排。" : "学校快照和自定义考试均保存在本机。", symbol: "doc.text") }
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                ForEach(["即将进行", "已结束", "时间待确认"], id: \.self) { section in
-                    let items = records.filter { record in guard let start = ShanghaiClock.examTime(record.fields.start) else { return section == "时间待确认" }; let end = ShanghaiClock.examTime(record.fields.end) ?? start; return section == (end < context.date ? "已结束" : "即将进行") }
-                    if !items.isEmpty {
-                        Text(section).font(.headline).padding(.top, 8)
-                        ForEach(items) { record in
-                            Button { app.showExam(record) } label: {
-                                AppCard { VStack(alignment: .leading, spacing: 9) { HStack(alignment: .top) { Text(record.fields.name).font(.headline); Spacer(); if record.hidden { Text("已隐藏").font(.caption) } }; if !record.fields.start.isEmpty { Label(record.fields.start + (record.fields.end.isEmpty ? "" : " — " + record.fields.end), systemImage: "clock").font(.subheadline) }; if !record.fields.location.isEmpty { Label(record.fields.location, systemImage: "mappin").font(.subheadline) }; if !record.fields.note.isEmpty { Text(record.fields.note).font(.subheadline).foregroundStyle(.secondary) }; Text(record.original == nil ? "自定义考试" : record.retained ? "历史本地保留副本" : record.modified ? "学校考试 · 已在本机修改" : "学校考试").font(.caption).foregroundStyle(.secondary) } }.foregroundStyle(.primary)
-                            }.buttonStyle(.plain).contextMenu { if record.hidden { Button("恢复显示") { Task { await app.setExamHidden(record, hidden: false) } } } }
-                        }
-                    }
-                }
+            if records.isEmpty { EmptyCard(title: search.trimmed.isEmpty ? "还没有考试安排" : "未找到相关考试", detail: app.academic.examUpdatedAt == nil ? "可从学校读取考试，或添加自己的安排。" : "学校快照和自定义考试均保存在本机。", symbol: "doc.text") }
+            ForEach(records) { item in
+                let record = item.record
+                Button { app.showExam(record) } label: {
+                    AppCard { VStack(alignment: .leading, spacing: 9) {
+                        HStack(alignment: .top) { Text(record.fields.name).font(.headline); Spacer(); if record.hidden { Text("已隐藏").font(.caption) } }
+                        Label(item.timeLabel(now: moment), systemImage: "clock").font(.subheadline)
+                        if !record.fields.location.isEmpty { Label(record.fields.location, systemImage: "mappin").font(.subheadline) }
+                        if !record.fields.note.isEmpty { Text(record.fields.note).font(.subheadline).foregroundStyle(Color.secondary) }
+                        Text(record.original == nil ? "自定义考试" : record.retained ? "历史本地保留副本" : record.modified ? "学校考试 · 已在本机修改" : "学校考试").font(.caption).foregroundStyle(Color.secondary)
+                    } }.foregroundStyle(item.finished ? Color.secondary : Color.primary)
+                }.buttonStyle(.plain).contextMenu { if record.hidden { Button("恢复显示") { Task { await app.setExamHidden(record, hidden: false) } } } }
             }
         }.padding(20).frame(maxWidth: 760) }.navigationTitle("考试")
             .searchable(text: $search, prompt: "搜索名称、地点或备注")
             .toolbar { ToolbarItemGroup(placement: .topBarTrailing) { Menu { Toggle("显示隐藏考试", isOn: $showHidden) } label: { Image(systemName: "line.3.horizontal.decrease.circle") }; Button { app.showExam() } label: { Image(systemName: "plus") }.disabled(app.academicError != nil) } }
+            .task(id: scenePhase == .active ? clockRevision : -1) {
+                guard scenePhase == .active else { return }
+                while !Task.isCancelled {
+                    moment = Date()
+                    let interval = 60 - moment.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
+                    do { try await Task.sleep(for: .seconds(max(0.05, interval))) } catch { break }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+                guard scenePhase == .active else { return }; moment = Date(); clockRevision += 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+                guard scenePhase == .active else { return }; moment = Date(); clockRevision += 1
+            }
     }
 }
 

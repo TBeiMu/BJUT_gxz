@@ -62,7 +62,6 @@ internal fun AcademicContent(grades: Boolean, state: AcademicUiState, controller
     AcademicContentBody(grades, state, actions, modifier, now, onDialogVisibilityChanged, onBack)
 }
 
-private enum class ExamFilter(val title: String) { ALL("全部"), UPCOMING("待考"), FINISHED("已结束"), UNSET("未定") }
 private const val NewExam = "__new_manual_exam__"
 
 @Composable
@@ -79,23 +78,13 @@ internal fun AcademicContentBody(grades: Boolean, state: AcademicUiState, action
     var pendingRevision by rememberSaveable { mutableLongStateOf(0L) }
     var addMenu by rememberSaveable { mutableStateOf(false) }
     var termMenu by rememberSaveable { mutableStateOf(false) }
-    var examFilter by rememberSaveable { mutableStateOf(ExamFilter.ALL) }
     var showHidden by rememberSaveable { mutableStateOf(false) }
     var term by rememberSaveable { mutableStateOf<String?>(null) }
     val data = state.data
     val target = if (grades) AcademicQueryTarget.GRADES else AcademicQueryTarget.EXAMS
     val canEdit = !state.loading && !state.blocked && !state.saving && !state.busy && state.request == null && !state.credentialBusy
-    val hidden = data.exams.filter { it.hidden }
-    val shown = data.exams.filterNot { it.hidden }.filter { exam ->
-        val start = parseAcademicExamTime(exam.fields.start)
-        val end = parseAcademicExamTime(exam.fields.end)?.takeUnless { start != null && it.isBefore(start) }
-        when (examFilter) {
-            ExamFilter.ALL -> true
-            ExamFilter.UPCOMING -> start != null && (end?.isBefore(now) == false || end == null && !start.isBefore(now))
-            ExamFilter.FINISHED -> start != null && end?.isBefore(now) == true
-            ExamFilter.UNSET -> start == null || end == null && start.isBefore(now)
-        }
-    }.sortedWith(compareBy<ExamRecord> { parseAcademicExamTime(it.fields.start) ?: LocalDateTime.MAX }.thenBy { it.fields.name })
+    val hidden = examListItems(data.exams.filter { it.hidden }, now)
+    val shown = examListItems(data.exams.filterNot { it.hidden }, now)
     fun confirm(action: String, exam: ExamRecord? = null) {
         pendingAction = action; pendingId = exam?.id; pendingRevision = data.revision
     }
@@ -197,25 +186,17 @@ internal fun AcademicContentBody(grades: Boolean, state: AcademicUiState, action
                     Text(state.credentialMessage, Modifier.fillMaxWidth().padding(horizontal = 4.dp), style = MaterialTheme.typography.bodySmall, color = gxz.ink)
                 }
                 if (!grades) {
-                    item(key = "exam_filters") {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            ExamFilter.entries.forEach { option -> FilterChip(option == examFilter, { examFilter = option },
-                                { Text(option.title) }, colors = FilterChipDefaults.filterChipColors(labelColor = gxz.ink),
-                                modifier = Modifier.testTag("exam_filter_${option.name}")) }
-                        }
-                    }
                     if (shown.isEmpty()) item(key = "empty_exams") { AcademicEmptyState(AppGlyph.EXAM,
-                        if (data.exams.none { !it.hidden }) "还没有考试安排" else "暂无匹配的考试",
-                        if (data.exams.none { !it.hidden }) "轻点右上角 ＋ 导入或添加" else "试试其他筛选") }
-                    items(shown, key = { "exam/${it.id}" }) { exam ->
-                        AcademicExamCard(exam, now) { detailsRevision = data.revision; selectedExam = exam.id }
+                        "还没有考试安排", "轻点右上角 ＋ 导入或添加") }
+                    items(shown, key = { "exam/${it.record.id}" }) { item ->
+                        AcademicExamCard(item, now) { detailsRevision = data.revision; selectedExam = item.record.id }
                     }
                     if (hidden.isNotEmpty()) {
                         item(key = "hidden_toggle") { TextButton({ showHidden = !showHidden }, Modifier.testTag("academic_hidden_toggle")) {
                             Text("${if (showHidden) "收起" else "已隐藏考试"} · ${hidden.size}")
                         } }
-                        if (showHidden) items(hidden, key = { "hidden/${it.id}" }) { exam ->
-                            AcademicExamCard(exam, now) { detailsRevision = data.revision; selectedExam = exam.id }
+                        if (showHidden) items(hidden, key = { "hidden/${it.record.id}" }) { item ->
+                            AcademicExamCard(item, now) { detailsRevision = data.revision; selectedExam = item.record.id }
                         }
                     }
                 } else {
@@ -377,22 +358,24 @@ private fun AcademicInfoCard(tag: String, onClick: () -> Unit, content: @Composa
 }
 
 @Composable
-private fun AcademicExamCard(exam: ExamRecord, now: LocalDateTime, onClick: () -> Unit) {
-    val start = parseAcademicExamTime(exam.fields.start)
+private fun AcademicExamCard(item: ExamListItem, now: LocalDateTime, onClick: () -> Unit) {
+    val exam = item.record
+    val start = item.start
+    val titleColor = if (item.finished) gxz.inkSoft else gxz.ink
     val badge = when { exam.hidden -> "已隐藏"; exam.original == null -> "自定义"; exam.retained -> "本地保留"; exam.modified -> "已修改"; else -> null }
     AcademicInfoCard("exam_${exam.id}", onClick) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val narrow = maxWidth < 240.dp * LocalDensity.current.fontScale
             val information: @Composable ColumnScope.() -> Unit = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                    Text(exam.fields.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = gxz.ink)
+                    Text(exam.fields.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = titleColor)
                     if (badge != null) {
                         val badgeWidth = with(LocalDensity.current) { MaterialTheme.typography.labelSmall.fontSize.toDp() } * badge.length + 14.dp
                         Text(badge, Modifier.widthIn(min = badgeWidth).background(gxz.well, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 3.dp),
                             style = MaterialTheme.typography.labelSmall, color = gxz.inkSoft)
                     }
                 }
-                Text(examTimeSummary(exam.fields, now, includeDate = narrow || start == null), Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
+                Text(examTimeSummary(item, now, includeDate = narrow || start == null), Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
                     LineGlyph(AppGlyph.LOCATION, Modifier.padding(top = 2.dp).size(16.dp), gxz.inkSoft)
                     Text(exam.fields.location.ifBlank { "地点未定" }, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = gxz.inkSoft)
@@ -404,7 +387,7 @@ private fun AcademicExamCard(exam: ExamRecord, now: LocalDateTime, onClick: () -
                     if (start != null) {
                         Text(if (start.year == now.year) "${start.monthValue}月" else "${start.year}/${start.monthValue}", Modifier.fillMaxWidth(),
                             style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, color = gxz.inkSoft)
-                        Text(start.dayOfMonth.toString().padStart(2, '0'), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center, color = gxz.ink)
+                        Text(start.dayOfMonth.toString().padStart(2, '0'), Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center, color = titleColor)
                         Text("周${"一二三四五六日"[start.dayOfWeek.value - 1]}", Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, color = gxz.inkSoft)
                     } else LineGlyph(AppGlyph.CALENDAR, Modifier.size(26.dp), gxz.inkSoft)
                 }
@@ -414,12 +397,14 @@ private fun AcademicExamCard(exam: ExamRecord, now: LocalDateTime, onClick: () -
     }
 }
 
-private fun examTimeSummary(fields: ExamFields, now: LocalDateTime, includeDate: Boolean): String {
-    val start = parseAcademicExamTime(fields.start)
-    val end = parseAcademicExamTime(fields.end)
+private fun examTimeSummary(item: ExamListItem, now: LocalDateTime, includeDate: Boolean): String {
+    val fields = item.record.fields
+    val start = item.start
+    val end = item.end
     val time = DateTimeFormatter.ofPattern("HH:mm")
     if (start == null) return listOf(fields.start.ifBlank { "时间未定" }, fields.end).filter { it.isNotBlank() }.joinToString(" – ")
     val date = DateTimeFormatter.ofPattern(if (start.year == now.year) "M月d日" else "yyyy年M月d日")
+    if (item.finished) return (if (includeDate) "${start.format(date)} · " else "") + "已结束"
     val first = (if (includeDate) "${start.format(date)} · " else "") + start.format(time)
     val last = when {
         end == null -> fields.end.ifBlank { "结束待定" }
