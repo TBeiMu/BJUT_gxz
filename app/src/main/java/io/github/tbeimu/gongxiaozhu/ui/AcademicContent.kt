@@ -3,6 +3,8 @@ package io.github.tbeimu.gongxiaozhu.ui
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +18,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.isOutOfBounds
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -473,11 +483,33 @@ private fun AcademicEmptyState(glyph: AppGlyph, title: String, description: Stri
 @Composable
 private fun AcademicDetailsDialog(tag: String, title: String, onDismiss: () -> Unit,
     actions: @Composable FlowRowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
+    var bounds by remember { mutableStateOf<Rect?>(null) }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    val dismiss by rememberUpdatedState(onDismiss)
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding().testTag("academic_details_overlay"), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding().testTag("academic_details_overlay")
+            .onGloballyPositioned { origin = it.positionInRoot() }
+            .pointerInput(Unit) {
+                // The full-screen dialog owns the blank area; only a stationary outside tap closes it.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    if (bounds?.contains(down.position + origin) != false) return@awaitEachGesture
+                    down.consume()
+                    while (true) {
+                        val change = awaitPointerEvent(PointerEventPass.Initial).changes.singleOrNull() ?: break
+                        if (change.id != down.id || change.isConsumed || change.isOutOfBounds(size, extendedTouchPadding) ||
+                            (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+                        if (!change.pressed) {
+                            if (bounds?.contains(change.position + origin) == false) { change.consume(); dismiss() }
+                            break
+                        }
+                    }
+                }
+            }, contentAlignment = Alignment.Center) {
             val margin = if (maxHeight < 360.dp) 8.dp else 20.dp
             Surface(Modifier.padding(horizontal = 20.dp, vertical = margin).widthIn(max = 560.dp).fillMaxWidth()
-                .heightIn(max = (maxHeight - margin * 2).coerceAtLeast(0.dp)).testTag(tag),
+                .heightIn(max = (maxHeight - margin * 2).coerceAtLeast(0.dp)).testTag(tag)
+                .onGloballyPositioned { bounds = it.boundsInRoot() },
                 shape = RoundedCornerShape(24.dp), color = gxz.glassStrong) {
                 Column {
                     Column(Modifier.weight(1f, false).verticalScroll(rememberScrollState()).padding(20.dp).testTag("academic_details_body"),

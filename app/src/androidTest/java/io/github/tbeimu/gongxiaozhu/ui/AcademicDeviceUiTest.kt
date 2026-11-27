@@ -149,6 +149,86 @@ class AcademicDeviceUiTest {
         }
     }
 
+    @Test fun examDetailsCloseOnBlankTapsButKeepContentGesturesAndEditingSafe() {
+        var editStarts = 0
+        var deletions = 0
+        var restorations = 0
+        render(actions = AcademicActions(beginEdit = { editStarts++ }, deleteExam = { _, _ -> deletions++ },
+            restoreExam = { _, _ -> restorations++ }))
+        fun open() {
+            reach("academic_exams", hasTestTag("exam_school"))
+            compose.onNodeWithTag("exam_school").performClick()
+            compose.onNodeWithTag("academic_exam_details").assertIsDisplayed()
+        }
+        open()
+        compose.onNodeWithTag("academic_details_body").performTouchInput { click(center) }
+        compose.onNodeWithTag("academic_exam_details").assertIsDisplayed()
+        compose.onNodeWithTag("academic_details_body").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("academic_exam_details").assertIsDisplayed()
+        compose.onNodeWithTag("academic_details_overlay").performTouchInput {
+            swipe(Offset(2f, centerY), Offset(2f, centerY - 100f))
+        }
+        compose.onNodeWithTag("academic_exam_details").assertIsDisplayed()
+        preview("exam-details-outside-tap")
+        for (edge in 0..3) {
+            if (edge > 0) open()
+            tapDetailsBlankArea(edge)
+            compose.onNodeWithTag("academic_exam_details").assertDoesNotExist()
+            compose.onNodeWithTag("exam_editor").assertDoesNotExist()
+        }
+        compose.runOnIdle { assertEquals(0, editStarts); assertEquals(0, deletions); assertEquals(0, restorations) }
+        open()
+        compose.onNodeWithTag("edit_exam_school").performClick()
+        compose.onNodeWithTag("academic_exam_details").assertDoesNotExist()
+        compose.onNodeWithTag("exam_editor").assertIsDisplayed()
+        compose.onNodeWithTag("exam_name").performTextReplacement("修改后的虚构考试")
+        compose.onNodeWithTag("exam_editor_overlay").performTouchInput { click(Offset(2f, centerY)) }
+        compose.onNodeWithTag("exam_editor").assertIsDisplayed()
+        compose.onNodeWithTag("discard_changes_dialog").assertDoesNotExist()
+        compose.onNodeWithTag("cancel_exam").performClick()
+        compose.onNodeWithTag("discard_changes_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("discard_changes").performClick()
+        compose.runOnIdle { assertEquals(1, editStarts); assertEquals(0, deletions); assertEquals(0, restorations) }
+    }
+
+    @Test fun gradeDetailsCloseOnBlankTapsButKeepContentGesturesAndCloseButtonWorking() {
+        render(grades = { true })
+        fun open() {
+            reach("academic_grades", hasTestTag("grade_0_1"))
+            compose.onNodeWithTag("grade_0_1").performClick()
+            compose.onNodeWithTag("academic_grade_details").assertIsDisplayed()
+        }
+        open()
+        compose.onNodeWithTag("academic_details_body").performTouchInput { click(center) }
+        compose.onNodeWithTag("academic_grade_details").assertIsDisplayed()
+        compose.onNodeWithTag("academic_details_body").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("academic_grade_details").assertIsDisplayed()
+        compose.onNodeWithTag("academic_details_overlay").performTouchInput {
+            swipe(Offset(2f, centerY), Offset(2f, centerY - 100f))
+        }
+        compose.onNodeWithTag("academic_grade_details").assertIsDisplayed()
+        preview("grade-details-outside-tap")
+        for (edge in 0..3) {
+            if (edge > 0) open()
+            tapDetailsBlankArea(edge)
+            compose.onNodeWithTag("academic_grade_details").assertDoesNotExist()
+        }
+        open()
+        compose.onNodeWithTag("academic_close_details").performClick()
+        compose.onNodeWithTag("academic_grade_details").assertDoesNotExist()
+    }
+
+    private fun tapDetailsBlankArea(edge: Int) {
+        compose.onNodeWithTag("academic_details_overlay").performTouchInput {
+            click(when (edge) {
+                0 -> Offset(2f, centerY)
+                1 -> Offset(width - 2f, centerY)
+                2 -> Offset(centerX, 2f)
+                else -> Offset(centerX, height - 2f)
+            })
+        }
+    }
+
     @Test fun loadedExamsKeepSchoolFieldsAndAllThreeFilterStatesReachable() {
         render()
         compose.onNodeWithTag("academic_identity").assertDoesNotExist()
