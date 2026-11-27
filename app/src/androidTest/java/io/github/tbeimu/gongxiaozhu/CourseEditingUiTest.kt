@@ -128,6 +128,7 @@ class CourseEditingUiTest {
         capture("course_details", "details")
         compose.onNodeWithText("编辑", substring = false).performClick()
         compose.onNodeWithTag("course_name").performTextReplacement("临时调课")
+        compose.onNodeWithTag("course_day_1").performScrollTo().performClick()
         compose.onNodeWithTag("course_day_3").performScrollTo().performClick()
         compose.onNodeWithTag("save_course").performClick()
         assertEquals("临时调课", data.value.complete!!.weeks[0].courses.single().name)

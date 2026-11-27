@@ -94,7 +94,7 @@ struct CourseEditor: View {
                             if context.creatingTerm {
                                 Section("本地学期") { DatePicker("第一周周一", selection: Binding(get: { ShanghaiClock.parse(draft.firstMonday) ?? Date() }, set: { draft.firstMonday = ShanghaiClock.day($0) }), displayedComponents: .date).environment(\.timeZone, ShanghaiClock.timezone); Stepper("共 \(draft.weekCount) 周", value: $draft.weekCount, in: 1...60).onChange(of: draft.weekCount) { _, count in draft.weeks.removeAll { $0 > count } } }
                             }
-                            Section("星期（可多选）") { SelectionGrid(values: Array(1...7), selected: $draft.weekdays, columns: 7, label: { ["一", "二", "三", "四", "五", "六", "日"][$0 - 1] }) }
+                            Section("星期") { SelectionGrid(values: Array(1...7), selected: $draft.weekdays, columns: 7, label: { ["一", "二", "三", "四", "五", "六", "日"][$0 - 1] }) }
                             Section("节次") { SelectionGrid(values: Array(1...12), selected: $draft.lessons); if draft.lessons.contains(where: { $0 > 12 }) { Text("保留原有晚节次：" + LessonTimes.label(draft.lessons)).font(.caption).foregroundStyle(.secondary) } }
                             Section("周次") { SelectionGrid(values: weekValues, selected: $draft.weeks); HStack { Button("全选") { draft.weeks = Array(1...draft.weekCount) }; Spacer(); Button("单周") { draft.weeks = (1...draft.weekCount).filter { $0 % 2 == 1 } }; Spacer(); Button("双周") { draft.weeks = (1...draft.weekCount).filter { $0 % 2 == 0 } }; Spacer(); Button("清空") { draft.weeks = [] } }; Text("长按并拖动可补选连续范围").font(.caption).foregroundStyle(.secondary) }
                             if context.course != nil {

@@ -76,6 +76,47 @@ class LocalCoursesTest {
         assertTrue(result.weeks[1].courses.any { it.date == demoWeek(2).dates[0] && it.lessons == c.lessons })
         assertTrue(result.weeks[1].courses.any { it.date == LocalDate.parse(demoWeek(2).dates[0]).plusDays(2).toString() })
     }
+    @Test fun schoolMultipleWeekdaysPersistDeduplicateAndUndoWithoutChangingOtherArrangements() {
+        val store = ScheduleMemoryStore(); val keys = ScheduleMemoryKeys(); val repo = repository(store, keys)
+        repo.begin(demoIdentity, demoTerm)
+        val source = demoWeek(1).courses.single()
+        val existingWednesday = source.copy(date = demoWeek(1).dates[2], timeText = "保留原时间说明")
+        val otherSeries = source.copy(name = "其他课程系列")
+        val otherLessons = source.copy(lessons = listOf(5, 6))
+        repo.append(demoWeek(1).copy(courses = listOf(source, existingWednesday, otherSeries, otherLessons)))
+        repo.append(demoWeek(2))
+        val before = repo.finish(1)
+        val context = before.courseEditor(source)
+        val saved = repo.editWithUndo(context, draft(context, source.name, source = listOf(1), lessons = source.lessons)
+            .copy(location = source.location, teacher = source.teacher, weekdays = listOf(1, 3, 7)))
+        val weeks = saved.data.complete!!.weeks
+        for (week in weeks) {
+            assertEquals(listOf(1, 3, 7), week.courses.filter {
+                it.id == source.id && it.name == source.name && it.lessons == source.lessons
+            }.map { LocalDate.parse(it.date).dayOfWeek.value }.sorted())
+        }
+        assertTrue(weeks[0].courses.containsAll(listOf(existingWednesday, otherSeries, otherLessons)))
+        assertTrue(weeks[1].courses.contains(demoWeek(2).courses.single()))
+        assertEquals(saved.data, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+        assertEquals(before, repo.undo(saved.undo!!.token))
+        assertEquals(before, ScheduleRepository(store, AesGcmVaultCipher(keys)).load())
+    }
+    @Test fun schoolMultipleWeekdayMoveRemovesOnlyOriginalRangeAndRejectsEmptyWeekdays() {
+        val repo = repository(); repo.begin(demoIdentity, demoTerm)
+        val source = demoWeek(1).courses.single()
+        val otherDay = source.copy(date = demoWeek(1).dates[4])
+        repo.append(demoWeek(1).copy(courses = listOf(source, otherDay)))
+        repo.append(demoWeek(2))
+        val before = repo.finish(1); val context = before.courseEditor(source)
+        for (days in listOf(emptyList(), listOf(0, 3), listOf(3, 8), listOf(3, 3))) {
+            assertThrows(CourseValidationException::class.java) { repo.edit(context, draft(context).copy(weekdays = days)) }
+            assertEquals(before, repo.snapshot())
+        }
+        val result = repo.edit(context, draft(context, source.name, source = context.availableWeeks, target = listOf(2))
+            .copy(location = source.location, teacher = source.teacher, weekdays = listOf(3, 7))).complete!!
+        assertEquals(listOf(otherDay), result.weeks[0].courses)
+        assertEquals(listOf(3, 7), result.weeks[1].courses.map { LocalDate.parse(it.date).dayOfWeek.value }.sorted())
+    }
     @Test fun schoolEditingDoesNotDuplicateAnExistingExactTargetOccurrence() {
         val repo = repository(); repo.begin(demoIdentity, demoTerm)
         val source = demoWeek(1).courses.single()

@@ -155,15 +155,13 @@ internal fun CourseEditor(context: CourseEditContext, saving: Boolean, error: St
         } else {
             Text("${context.firstMonday} 起 · ${context.weekCount} 周", style = MaterialTheme.typography.bodySmall, color = gxz.inkSoft)
         }
-        EditorSection("星期", if (course?.source == CourseSource.SCHOOL) "单选" else "可多选") {
+        EditorSection("星期") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日").forEachIndexed { index, label ->
                     val day = index + 1
-                    EditorChoice(label, day in weekdays, !saving, "course_day_$day",
-                        role = if (course?.source == CourseSource.SCHOOL) Role.RadioButton else Role.Checkbox) {
+                    EditorChoice(label, day in weekdays, !saving, "course_day_$day") {
                         focus.clearFocus()
-                        weekdays = if (course?.source == CourseSource.SCHOOL) listOf(day)
-                        else if (day in weekdays) weekdays - day else (weekdays + day).sorted()
+                        weekdays = if (day in weekdays) weekdays - day else (weekdays + day).sorted()
                     }
                 }
             }

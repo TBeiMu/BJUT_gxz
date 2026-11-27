@@ -131,7 +131,6 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
         check(draft.location.length <= 500 && draft.teacher.length <= 500, "教室或教师信息过长")
         check(draft.weekdays.isNotEmpty() && draft.weekdays.all { it in 1..7 } &&
             draft.weekdays.distinct().size == draft.weekdays.size && draft.weekCount in 1..60, "请选择有效星期和学期周数")
-        check(source?.source != CourseSource.SCHOOL || draft.weekdays.size == 1, "学校课程调课请选择一个星期")
         check(draft.targetWeeks.isNotEmpty() && draft.targetWeeks.all {
             it in 1..draft.weekCount || it in context.originalArrangements.map { arrangement -> arrangement.week }
         }, "请选择有效上课周次")
@@ -157,11 +156,12 @@ internal fun ScheduleData.editCourse(context: CourseEditContext, draft: CourseDr
         val weeks = school.weeks.map { w ->
             val retained = w.courses.filterNot { w.number in draft.sourceWeeks && it.sameSeries(source) }
             val additions = if (!context.deleteOnly && w.number in draft.targetWeeks) {
-                val target = source.copy(name = draft.name.trim(), location = draft.location.trim(), teacher = draft.teacher.trim(),
-                    lessons = draft.lessons.sorted(),
-                    date = monday.plusWeeks(w.number - 1L).plusDays(draft.weekdays.single() - 1L).toString(),
-                    timeText = "", weeksText = "第 ${w.number} 周")
-                if (retained.any { it.sameOccurrence(target) }) emptyList() else listOf(target)
+                draft.weekdays.sorted().map { day ->
+                    source.copy(name = draft.name.trim(), location = draft.location.trim(), teacher = draft.teacher.trim(),
+                        lessons = draft.lessons.sorted(),
+                        date = monday.plusWeeks(w.number - 1L).plusDays(day - 1L).toString(),
+                        timeText = "", weeksText = "第 ${w.number} 周")
+                }.filterNot { target -> retained.any { it.sameOccurrence(target) } }
             } else emptyList()
             w.copy(courses = retained + additions)
         }
