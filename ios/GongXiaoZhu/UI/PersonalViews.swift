@@ -168,7 +168,17 @@ private struct ShuttleTimeCell: View {
     }
     private var badge: some View { Text("末车").font(.caption2).fixedSize() }
 
-    var body: some View {
+    private var fill: Color {
+        if highlighted { return app.appearance.accent }
+        if striped { return scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.045) }
+        let base: Color = scheme == .dark ? Color(hex: 0x20232B) : .white
+        return base.opacity(1 - app.appearance.preferences.transparency / 100)
+    }
+    private var border: Color {
+        if highlighted { return app.appearance.accent }
+        return scheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08)
+    }
+    private var fittedTime: some View {
         ViewThatFits(in: .horizontal) {
             ZStack {
                 HStack(spacing: 6) { badge.hidden(); timeText; badge.hidden() }
@@ -176,14 +186,14 @@ private struct ShuttleTimeCell: View {
             }
             VStack(spacing: 4) { timeText; badge.opacity(last ? 1 : 0).accessibilityHidden(!last) }
         }
+    }
+
+    var body: some View {
+        fittedTime
         .foregroundStyle(foreground).padding(.horizontal, 10).padding(.vertical, 8)
         .frame(maxWidth: .infinity, minHeight: 40, maxHeight: .infinity)
-        .background(highlighted ? app.appearance.accent :
-            (striped ? (scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.045)) :
-                (scheme == .dark ? Color(hex: 0x20232B) : .white).opacity(1 - app.appearance.preferences.transparency / 100)),
-            in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(
-            highlighted ? app.appearance.accent : (scheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08)), lineWidth: 0.6))
+        .background(fill, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(border, lineWidth: 0.6))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ShuttleRoute.timeLabel(time) + (last ? "，末车" : ""))
         .accessibilityValue(highlighted ? "下一班" : (past ? "已过计划发车时间" : "计划发车时间"))

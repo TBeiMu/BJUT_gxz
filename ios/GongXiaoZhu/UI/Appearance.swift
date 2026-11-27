@@ -12,7 +12,7 @@ struct AppearancePreferences: Codable, Equatable {
     var blur = 12.0
     var transparency = 4.0
     var photoColor: [Double] = [0.6, 0.8, 0.9]
-    var valid: Bool { ["system", "light", "dark"].contains(theme) && (0..<4).contains(accent) && (0..<6).contains(preset) && ["preset", "photo", "color"].contains(mode) && (0...24).contains(blur) && (2...100).contains(transparency) && photoColor.count == 3 && photoColor.allSatisfy { (0...1).contains($0) } }
+    var valid: Bool { ["system", "light", "dark"].contains(theme) && (0..<4).contains(accent) && (0..<6).contains(preset) && ["preset", "photo", "color"].contains(mode) && (0...24).contains(blur) && (0...100).contains(transparency) && photoColor.count == 3 && photoColor.allSatisfy { (0...1).contains($0) } }
 }
 @MainActor @Observable final class AppearanceStore {
     var preferences = AppearancePreferences() { didSet { if preferences.valid, let data = try? JSONEncoder().encode(preferences) { UserDefaults.standard.set(data, forKey: "appearance.preferences") } } }
@@ -138,7 +138,7 @@ struct AppearancePage: View {
                 AppCard {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("卡片通透度 \(Int(appearance.preferences.transparency))%").font(.headline)
-                        Slider(value: $appearance.preferences.transparency, in: 2...100, step: 2)
+                        Slider(value: $appearance.preferences.transparency, in: 0...100, step: 2)
                         HStack { ForEach([4, 20, 100], id: \.self) { value in Button([4: "默认 4%", 20: "轻透 20%", 100: "全透 100%"][value]!) { appearance.preferences.transparency = Double(value) }.buttonStyle(.bordered) } }
                     }
                 }
