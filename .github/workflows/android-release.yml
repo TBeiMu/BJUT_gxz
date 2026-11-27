@@ -24,6 +24,11 @@ on:
         required: false
         default: false
         type: boolean
+      build_only:
+        description: 仅保存正式附件，供双端同版本修订一起发布
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -130,6 +135,7 @@ jobs:
           path: ${{ runner.temp }}/release-assets/
           retention-days: 14
       - name: 发布 GitHub Release
+        if: github.event_name == 'push' || !inputs.build_only
         env:
           GH_TOKEN: ${{ github.token }}
           REPLACE_EXISTING: ${{ inputs.replace_existing }}

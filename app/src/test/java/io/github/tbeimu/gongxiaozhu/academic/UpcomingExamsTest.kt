@@ -2,6 +2,8 @@ package io.github.tbeimu.gongxiaozhu.academic
 
 import java.time.LocalDate
 import java.time.LocalDateTime
+import io.github.tbeimu.gongxiaozhu.ui.upcomingExamCountdownLabel
+import io.github.tbeimu.gongxiaozhu.ui.upcomingExamDateTimeLabel
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -100,6 +102,23 @@ class UpcomingExamsTest {
         val records = (1..4).map { day -> exam(day.toString(), "2026-12-0$day 09:00") }
         val summary = upcomingExamOverview(records.reversed(), today, now)!!
         assertEquals(listOf("1", "2", "3"), summary.exams.map { it.record.id })
+    }
+
+    @Test fun countdownAndDateLabelFollowTheViewedCalendarDay() {
+        val record = exam("next-day", "2026-11-28 09:00")
+        val item = upcomingExamOverview(listOf(record), today, now)!!.exams.single()
+        assertEquals("11月28日 09:00", upcomingExamDateTimeLabel(item, today))
+        assertEquals("剩1天", upcomingExamCountdownLabel(item, today))
+        assertEquals("加油！", upcomingExamCountdownLabel(item, today.plusDays(1)))
+        assertEquals("剩1天", upcomingExamCountdownLabel(item, today))
+    }
+
+    @Test fun countdownAndYearLabelCrossTheViewedYearBoundary() {
+        val record = exam("new-year", "2027-01-01 09:00")
+        val item = upcomingExamOverview(listOf(record), LocalDate.of(2026, 12, 31), now)!!.exams.single()
+        assertEquals("2027年1月1日 09:00", upcomingExamDateTimeLabel(item, LocalDate.of(2026, 12, 31)))
+        assertEquals("剩1天", upcomingExamCountdownLabel(item, LocalDate.of(2026, 12, 31)))
+        assertEquals("加油！", upcomingExamCountdownLabel(item, LocalDate.of(2027, 1, 1)))
     }
 
     @Test fun noMatchingExamsProducesNoOverview() {

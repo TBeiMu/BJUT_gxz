@@ -6,7 +6,7 @@ import java.time.LocalDateTime
 /** A derived view of existing records; never persisted or used to initiate a query. */
 internal data class UpcomingExam(val record: ExamRecord,
     val start: LocalDateTime, val end: LocalDateTime?)
-internal data class UpcomingExamOverview(val exams: List<UpcomingExam>)
+internal data class UpcomingExamOverview(val viewingDate: LocalDate, val exams: List<UpcomingExam>)
 
 /** The selected day owns the window; the real Shanghai clock always owns expiry. */
 internal fun upcomingExamOverview(records: List<ExamRecord>, from: LocalDate,
@@ -20,5 +20,5 @@ internal fun upcomingExamOverview(records: List<ExamRecord>, from: LocalDate,
         UpcomingExam(record, start, end)
     }.sortedWith(compareBy<UpcomingExam> { it.start }
         .thenBy { it.record.fields.name }.thenBy { it.record.id }).take(3).toList()
-    return matches.takeIf { it.isNotEmpty() }?.let(::UpcomingExamOverview)
+    return matches.takeIf { it.isNotEmpty() }?.let { UpcomingExamOverview(from, it) }
 }

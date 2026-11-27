@@ -32,6 +32,7 @@ class UpcomingExamsDeviceUiTest {
     private val location = "虚构教学楼三层东侧 301 教室（并非真实考试地点）"
     private fun fixture(): AcademicUiState = AcademicUiState(loading = false, data = AcademicData(exams = listOf(
         ExamRecord("next", fields = ExamFields(name, "2026-11-28 09:00", "2026-11-28 11:00", location)),
+        ExamRecord("selected-day", fields = ExamFields("浏览日期虚构考试", "2026-11-29 10:00")),
         ExamRecord("later", fields = ExamFields("另一场虚构考试", "2026-12-26 09:00")))))
     private fun timetable(): ScheduleUiState {
         val identity = ScheduleIdentity("fictional-exam-overview")
@@ -47,13 +48,19 @@ class UpcomingExamsDeviceUiTest {
             compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
         }
     }
-    private fun readable(value: String) {
+    private fun readable(value: String, singleLine: Boolean = false) {
         compose.onNodeWithText(value, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { get ->
             val result = mutableListOf<TextLayoutResult>()
             assertTrue(get(result))
             val layout = result.single()
-            assertFalse("Exam text must wrap without clipping: $value; size=${layout.size}; lines=${layout.lineCount}; " +
-                "width=${layout.didOverflowWidth}; height=${layout.didOverflowHeight}", layout.hasVisualOverflow)
+            val message = "$value (${layout.size}, ${layout.lineCount} lines)"
+            assertFalse(message, layout.didOverflowHeight)
+            if (singleLine) assertEquals(message, 1, layout.lineCount)
+            for (line in 0 until layout.lineCount) {
+                assertFalse(message, layout.isLineEllipsized(line))
+                assertTrue(message, layout.getLineLeft(line) >= -1f)
+                assertTrue(message, layout.getLineRight(line) <= layout.size.width + 1f)
+            }
         }
     }
 
@@ -67,14 +74,17 @@ class UpcomingExamsDeviceUiTest {
         preview("today")
         compose.onNodeWithTag("agenda_day_6").performClick()
         compose.onNodeWithTag("upcoming_exams").performScrollTo()
-        compose.onNodeWithText("12月26日 09:00 · 剩29天").assertExists()
+        compose.onNodeWithText("11月29日 10:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithText("12月26日 09:00").assertExists()
+        compose.onNodeWithText("剩27天").assertExists()
         compose.onNodeWithTag("schedule_mode").performClick()
         compose.onNodeWithTag("upcoming_exams").assertDoesNotExist()
         compose.onNodeWithTag("schedule_mode").performClick()
         compose.onNodeWithText("今天 · 11月27日 · 第 1 周").assertExists()
     }
 
-    @Test fun compactSummaryWrapsAt320dpAcrossThemesAndFontSizes() {
+    @Test fun summaryCardWrapsAt320dpAcrossThemesAndFontSizes() {
         val appearance = mutableStateOf(WallpaperPreferences(themeMode = AppThemeMode.LIGHT))
         val fontScale = mutableStateOf(1f)
         compose.setContent {
@@ -94,11 +104,30 @@ class UpcomingExamsDeviceUiTest {
             compose.onNodeWithTag("upcoming_exams").performScrollTo()
             compose.onNodeWithTag("agenda_scroll_2026-11-27").performTouchInput { swipeUp() }
             preview("${mode.name}-$scale")
-            listOf(name, "11月28日 09:00 · 剩1天").forEach(::readable)
+            readable(name)
+            readable("11月28日 09:00")
+            readable("剩1天", singleLine = true)
+            readable("剩29天", singleLine = true)
             compose.onNodeWithText("近30日考试").assertDoesNotExist()
             compose.onAllNodes(hasText("场考试", substring = true)).assertCountEquals(0)
             compose.onNodeWithText(location).assertDoesNotExist()
         }
+    }
+
+    @Test fun reducedMotionShowsTheNewCountdownWhenMovingForwardAndBack() {
+        compose.setContent { GongXiaoZhuTheme {
+            CompositionLocalProvider(LocalReducedMotion provides true) {
+                ScheduleHome(timetable(), Modifier, {}, {}, {}, {}, todayProvider = { now.toLocalDate() },
+                    nowProvider = { now.toLocalTime() }, academic = fixture(), examNowProvider = { now })
+            }
+        } }
+        compose.onNodeWithText("剩29天").assertExists()
+        compose.onNodeWithTag("agenda_day_5").performClick()
+        compose.onNodeWithText("剩28天").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithTag("agenda_day_4").performClick()
+        compose.onNodeWithText("剩29天").assertExists()
+        compose.onNodeWithText("加油！").assertDoesNotExist()
     }
 
     @Test fun atMostThreeRowsAndTodayEncouragementAreVisible() {
@@ -112,8 +141,10 @@ class UpcomingExamsDeviceUiTest {
             academic = AcademicUiState(loading = false, data = AcademicData(exams = exams)), examNowProvider = { now }) } }
         listOf("today", "next", "third").forEach { compose.onNodeWithTag("upcoming_exam_$it").assertExists() }
         compose.onNodeWithTag("upcoming_exam_fourth").assertDoesNotExist()
-        compose.onNodeWithText("11月27日 11:00 · 加油！").assertExists()
-        compose.onNodeWithText("11月28日 09:00 · 剩1天").assertExists()
+        compose.onNodeWithText("11月27日 11:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithText("11月28日 09:00").assertExists()
+        compose.onNodeWithText("剩1天").assertExists()
     }
 
     @Test fun emptyAndBlockedSnapshotsDoNotClaimThereAreExams() {

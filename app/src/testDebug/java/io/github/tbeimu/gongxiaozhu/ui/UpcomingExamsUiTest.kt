@@ -60,9 +60,12 @@ class UpcomingExamsUiTest {
         show()
         compose.onNodeWithText("近30日考试").assertDoesNotExist()
         compose.onNodeWithTag("upcoming_exams").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("11月28日 09:00 · 剩1天").assertExists()
-        compose.onNodeWithText("11月29日 09:00 · 剩2天").assertExists()
-        compose.onNodeWithText("11月30日 09:00 · 剩3天").assertExists()
+        compose.onNodeWithText("11月28日 09:00").assertExists()
+        compose.onNodeWithText("剩1天").assertExists()
+        compose.onNodeWithText("11月29日 09:00").assertExists()
+        compose.onNodeWithText("剩2天").assertExists()
+        compose.onNodeWithText("11月30日 09:00").assertExists()
+        compose.onNodeWithText("剩3天").assertExists()
         compose.onAllNodes(hasText("场考试", substring = true)).assertCountEquals(0)
         compose.onNodeWithText("虚构考试最近").assertExists()
         compose.onNodeWithText("虚构考试稍后").assertDoesNotExist()
@@ -74,13 +77,24 @@ class UpcomingExamsUiTest {
     }
 
     @Test fun browsingDateMovesWindowAndRestorationKeepsSelection() {
-        seed(); val restoration = show()
+        seed()
+        academic = academic.copy(data = academic.data.copy(exams = academic.data.exams +
+            exam("所选日期", "2026-11-29 09:00")))
+        val restoration = show()
         compose.onNodeWithTag("agenda_day_6").performClick()
         compose.onNodeWithTag("upcoming_exams").performScrollTo()
-        compose.onNodeWithText("12月26日 09:00 · 剩29天").assertExists()
+        compose.onNodeWithText("11月29日 09:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithText("12月26日 09:00").assertExists()
+        compose.onNodeWithText("剩27天").assertExists()
         compose.onNodeWithText("虚构考试稍后").assertExists()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("11月29日 · 第 1 周").assertExists()
+        compose.onNodeWithText("11月29日 09:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithText("12月26日 09:00").assertExists()
+        compose.onNodeWithText("剩27天").assertExists()
+        compose.onNodeWithText("11月28日 09:00").assertDoesNotExist()
         compose.onNodeWithText("虚构考试稍后").assertExists()
     }
 
@@ -99,7 +113,8 @@ class UpcomingExamsUiTest {
         academic = academic.copy(data = AcademicData(exams = listOf(exam("进行中",
             "2026-11-27 11:00", "2026-11-27 12:00"))))
         show()
-        compose.onNodeWithText("11月27日 11:00 · 加油！").assertExists()
+        compose.onNodeWithText("11月27日 11:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
         compose.runOnIdle {
             clock.set(clock.get().plusMinutes(1))
             compose.activity.sendBroadcast(Intent(Intent.ACTION_TIME_TICK))
@@ -112,7 +127,8 @@ class UpcomingExamsUiTest {
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         clock.set(clock.get().plusDays(2))
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.onNodeWithText("12月26日 09:00 · 剩27天").assertExists()
+        compose.onNodeWithText("12月26日 09:00").assertExists()
+        compose.onNodeWithText("剩27天").assertExists()
         compose.onNodeWithText("虚构考试稍后").assertExists()
         compose.runOnIdle { academic = academic.copy(data = academic.data.copy(exams = emptyList())) }
         compose.onNodeWithTag("upcoming_exams").assertDoesNotExist()
@@ -146,12 +162,15 @@ class UpcomingExamsUiTest {
             exam("今晚", "2026-11-27 23:00", "2026-11-28 00:30"),
             exam("明早", "2026-11-28 09:00"))))
         show()
-        compose.onNodeWithText("11月27日 23:00 · 加油！").assertExists()
-        compose.onNodeWithText("11月28日 09:00 · 剩1天").assertExists()
+        compose.onNodeWithText("11月27日 23:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
+        compose.onNodeWithText("11月28日 09:00").assertExists()
+        compose.onNodeWithText("剩1天").assertExists()
         compose.runOnIdle {
             clock.set(clock.get().plusMinutes(1))
             compose.activity.sendBroadcast(Intent(Intent.ACTION_DATE_CHANGED))
         }
-        compose.onNodeWithText("11月28日 09:00 · 加油！").assertExists()
+        compose.onNodeWithText("11月28日 09:00").assertExists()
+        compose.onNodeWithText("加油！").assertExists()
     }
 }

@@ -28,12 +28,15 @@ struct UpcomingExam: Identifiable {
     let start: Date
     var id: String { record.id }
 
-    func timeLabel(now: Date) -> String {
+    func dateTimeLabel(viewingDay: String) -> String {
         let year = ShanghaiClock.calendar.component(.year, from: start)
-        let currentYear = ShanghaiClock.calendar.component(.year, from: now)
+        let currentYear = ShanghaiClock.parse(viewingDay).map { ShanghaiClock.calendar.component(.year, from: $0) } ?? year
         let date = ShanghaiClock.format(start, year == currentYear ? "M月d日" : "yyyy年M月d日")
-        let days = max(0, ShanghaiClock.days(from: ShanghaiClock.day(now), to: ShanghaiClock.day(start)) ?? 0)
-        let reminder = days == 0 ? "加油！" : "剩\(days)天"
-        return date + " " + ShanghaiClock.format(start, "HH:mm") + " · " + reminder
+        return date + " " + ShanghaiClock.format(start, "HH:mm")
+    }
+
+    func countdownLabel(viewingDay: String) -> String {
+        let days = max(0, ShanghaiClock.days(from: viewingDay, to: ShanghaiClock.day(start)) ?? 0)
+        return days == 0 ? "加油！" : "剩\(days)天"
     }
 }

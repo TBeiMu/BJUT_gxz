@@ -5,7 +5,6 @@ private struct CourseSelection: Identifiable { var id = UUID(); var courses: [Co
 struct ScheduleHome: View {
     @Environment(AppState.self) var app
     @Environment(\.colorScheme) var scheme
-    @Environment(\.dynamicTypeSize) var typeSize
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var now = Date()
     @State private var weekPicker = false
@@ -94,20 +93,17 @@ struct ScheduleHome: View {
     @ViewBuilder private func examSummary(from day: String) -> some View {
         if app.loaded, app.academicError == nil,
            let overview = UpcomingExamOverview.make(records: app.academic.exams, from: day, now: now) {
-            VStack(alignment: .leading, spacing: 0) { ForEach(overview.exams) { exam in
-              Button { app.open(.exams) } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "doc.text").foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(exam.record.fields.name).font(.subheadline)
-                        Text(exam.timeLabel(now: now))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                }.padding(.vertical, 12).frame(minHeight: 48).foregroundStyle(.primary)
-              }.buttonStyle(.plain).accessibilityIdentifier("upcoming_exam_" + exam.id)
-                .accessibilityHint("查看全部考试")
-            } }.accessibilityIdentifier("upcoming_exams")
+            AppCard {
+                VStack(spacing: 0) {
+                    ForEach(Array(overview.exams.enumerated()), id: \.element.id) { item in
+                        if item.offset > 0 { Divider().padding(.leading, 48) }
+                        UpcomingExamRow(exam: item.element, viewingDay: day, index: item.offset) {
+                            app.open(.exams)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("upcoming_exams")
+            }
         }
     }
     @ViewBuilder private func liveCourse(_ course: Course) -> some View {
@@ -118,6 +114,83 @@ struct ScheduleHome: View {
             ProgressView(value: now.timeIntervalSince(current.0), total: current.1.timeIntervalSince(current.0)).tint(app.appearance.accent)
             Text("正在上课 · 本节还剩 \(max(1, Int(ceil(current.1.timeIntervalSince(now) / 60)))) 分钟").font(.caption).foregroundStyle(app.appearance.accent)
         }
+    }
+}
+
+private struct UpcomingExamRow: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var appeared = false
+    let exam: UpcomingExam
+    let viewingDay: String
+    let index: Int
+    let open: () -> Void
+
+    private var primary: Bool { index == 0 }
+    private var tone: Color { primary ? app.appearance.accent : .secondary }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(tone)
+                    .frame(width: 38, height: 38)
+                    .background(tone.opacity(primary ? 0.12 : 0.08), in: Circle())
+                    .accessibilityHidden(true)
+                if typeSize >= .xxLarge {
+                    stackedDetails
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { details; badge.fixedSize() }
+                        stackedDetails
+                    }
+                }
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary).accessibilityHidden(true)
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("upcoming_exam_" + exam.id)
+        .accessibilityHint("查看全部考试")
+        .opacity(reduceMotion || appeared ? 1 : 0)
+        .offset(y: reduceMotion || appeared ? 0 : 6)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24).delay(Double(index) * 0.045), value: appeared)
+        .onAppear { appeared = true }
+    }
+
+    private var details: some View {
+        let time = exam.dateTimeLabel(viewingDay: viewingDay)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(exam.record.fields.name)
+                .font(.subheadline.weight(primary ? .semibold : .regular))
+                .foregroundStyle(.primary)
+            Text(time).font(.caption).foregroundStyle(.secondary)
+                .contentTransition(reduceMotion ? .identity : .opacity)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: time)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var stackedDetails: some View {
+        VStack(alignment: .leading, spacing: 4) { details; badge }
+    }
+
+    private var badge: some View {
+        let countdown = exam.countdownLabel(viewingDay: viewingDay)
+        return Text(countdown)
+            .font(.caption.weight(.medium).monospacedDigit())
+            .foregroundStyle(tone)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(tone.opacity(primary ? 0.12 : 0.08), in: Capsule())
+            .contentTransition(reduceMotion ? .identity : .numericText())
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: countdown)
     }
 }
 
