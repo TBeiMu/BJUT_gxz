@@ -123,10 +123,10 @@ internal fun ScheduleHome(state: ScheduleUiState, modifier: Modifier, onImport: 
 }
 
 @Composable
-private fun ModeSwitch(week: Boolean, modifier: Modifier, onClick: () -> Unit) {
+internal fun ModeSwitch(week: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val palette = gxz
     val interaction = remember { MutableInteractionSource() }
-    Row(modifier.pressScale(interaction, .94f).glass(palette, CircleShape, strong = true)
+    Row(modifier.pressScale(interaction, .94f).glass(palette, CircleShape)
         .clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick)
         .heightIn(min = 44.dp).padding(start = 14.dp, end = 18.dp).testTag("schedule_mode")
         .semantics { contentDescription = if (week) "切换到今日" else "查看整周课表" },

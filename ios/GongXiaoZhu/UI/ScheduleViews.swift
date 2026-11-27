@@ -4,6 +4,7 @@ import UIKit
 private struct CourseSelection: Identifiable { var id = UUID(); var courses: [Course] }
 struct ScheduleHome: View {
     @Environment(AppState.self) var app
+    @Environment(\.colorScheme) var scheme
     @Environment(\.dynamicTypeSize) var typeSize
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var now = Date()
@@ -31,7 +32,12 @@ struct ScheduleHome: View {
             HStack {
                 if app.display != nil { Button("返回本周") { withAnimation(.easeOut(duration: 0.22)) { app.selectToday() } }.buttonStyle(.bordered) }
                 Spacer()
-                Button { app.setWholeWeek(!app.wholeWeek) } label: { Label(app.wholeWeek ? "今日" : "整周", systemImage: app.wholeWeek ? "list.bullet" : "rectangle.split.3x3") }.buttonStyle(.borderedProminent)
+                Button { app.setWholeWeek(!app.wholeWeek) } label: {
+                    Label(app.wholeWeek ? "今日" : "整周", systemImage: app.wholeWeek ? "list.bullet" : "rectangle.split.3x3")
+                        .foregroundStyle(.primary).padding(.horizontal, 14).padding(.vertical, 7)
+                        .background((scheme == .dark ? Color(hex: 0x20232B) : .white).opacity(1 - app.appearance.preferences.transparency / 100), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(scheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08), lineWidth: 0.6))
+                }.buttonStyle(.plain)
             }.padding(.horizontal, 20).padding(.bottom, 8)
         }.navigationBarHidden(true)
             .onChange(of: weekPicker) { _, value in app.modal("week-picker", value) }
